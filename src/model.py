@@ -83,26 +83,24 @@ class GPTModel(L.LightningModule):
         inputs, targets = batch
         inputs = inputs.to(self.device)
         targets = targets.to(self.device)
-        # Reshape outputs to [batch_size * sequence_length, vocab_size]
-        outputs = outputs.view(-1, self.vocab_size)
-        # Flatten targets to [batch_size * sequence_length]
-        targets = targets.view(-1)
+        outputs = self(inputs)  # You need to add this line to generate outputs
+        outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
+        targets = targets.view(-1)  # Flatten targets
         loss = F.cross_entropy(outputs, targets)
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
-
+        
     def validation_step(self, batch, batch_idx):
         inputs, targets = batch
         inputs = inputs.to(self.device)
         targets = targets.to(self.device)
+        outputs = self(inputs)  # You need to add this line to generate outputs
         print(f"Validation Step - outputs shape: {outputs.shape}, targets shape: {targets.shape}")  # Debug
         outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
         targets = targets.view(-1)  # Flatten targets
         loss = F.cross_entropy(outputs, targets)
         self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
         return loss
-
- 
 
     def train_dataloader(self):
         train_dataset = TokenizedTextDataset('data/training_data.txt')
