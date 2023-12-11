@@ -6,8 +6,12 @@ authors = ["Matthew <matthew@zeti.dev>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.12"
-
+python = "^3.11"
+tiktoken = "^0.5.2"
+torch = "^2.1.1"
+argparse = "^1.4.0"
+lightning = "^2.1.2"
+tensorboard = "^2.15.1"
 
 [build-system]
 requires = ["poetry-core"]
