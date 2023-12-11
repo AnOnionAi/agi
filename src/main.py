@@ -29,9 +29,9 @@ def train_model():
     # Initialize the Trainer with the logger
     trainer = Trainer(
         max_epochs=1,
-        devices="auto"
-        accelerator="auto"
-        logger=logger  # Add logger here
+        devices=1,
+        accelerator="gpu",
+        logger=logger
     )
     # Train the model
     trainer.fit(model)
