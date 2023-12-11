@@ -5,6 +5,7 @@ import torch
 
 from encode import encode_file
 from model import GPTModel
+from predict import predict_model
 
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
@@ -19,7 +20,7 @@ def train_model():
         forward_expansion=4, 
         dropout_rate=0.1,
         #vocab_size=100232,  # 50257 is size for GPT-2 and 100232 for GPT-4
-        vocab_size=50257,
+        vocab_size=100232,
         batch_size=32,
         trainable_pos_emb=True
     )
@@ -43,6 +44,12 @@ def main(args):
         print(f"Encoded Tokens written to {args.output_file}")
     elif args.command == 'train':
         train_model()
+        print("Training Complete")
+    elif args.command == 'predict':
+        input_text = "Why Svelte Good?"
+        predict_model(input_text, 6)
+    else:
+        print("Invalid command")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AGI Model Operations")
@@ -55,6 +62,9 @@ if __name__ == "__main__":
 
     # Subparser for training
     parser_train = subparsers.add_parser('train', help='Train the GPT model')
+
+    # Add predict command
+    predict_parser = subparsers.add_parser('predict', help='predict output for a given input text')
 
     # Parse the arguments and call the main function
     args = parser.parse_args()
