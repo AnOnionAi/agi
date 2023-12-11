@@ -6,22 +6,18 @@ class TokenizedTextDataset(Dataset):
         # Load and process the data
         self.sequence_length = sequence_length
         with open(file_path, 'r') as file:
-            tokenized_text = file.readlines()
-        self.data = [int(token.strip()) for token in tokenized_text]
+            lines = file.readlines()
+        self.data = [list(map(int, line.strip().split())) for line in lines]
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        # Adjust to return a consistent sequence of tokens
-        start_idx = idx * self.sequence_length
-        end_idx = start_idx + self.sequence_length
-        sequence = self.data[start_idx:end_idx]
-        target_sequence = self.data[start_idx + 1:end_idx + 1]
-
-        if len(sequence) < self.sequence_length:
-            # Add padding if needed
-            sequence.extend([0] * (self.sequence_length - len(sequence)))
-            target_sequence.extend([0] * (self.sequence_length - len(target_sequence)))
-
-        return torch.tensor(sequence), torch.tensor(target_sequence)
+        # Get the token sequence for the requested index
+        sequence = self.data[idx]
+        # Handle sequences shorter than the desired sequence length
+        padded_sequence = sequence + [0] * (self.sequence_length - len(sequence))
+        # Prepare input and target sequences
+        input_sequence = padded_sequence[:-1]
+        target_sequence = padded_sequence[1:]
+        return torch.tensor(input_sequence), torch.tensor(target_sequence)

@@ -4,19 +4,17 @@ def encode_file(file_path, output_file):
     # Initialize the tokenizer for GPT-4 model
     encoder = tiktoken.encoding_for_model("gpt-4")
 
-    # Read the training data
+    # Read the training data, assuming each line in the file is a separate sentence
     with open(file_path, 'r', encoding='utf-8') as file:
-        text = file.read()
+        sentences = file.readlines()
 
-    # Encode the text into tokens
-    tokens = encoder.encode(text)
-
-    # Write the tokens to the output file
+    # Encode each sentence into tokens and write to the output file
     with open(output_file, 'w', encoding='utf-8') as file:
-        for token in tokens:
-            file.write(f'{token}\n')
+        for sentence in sentences:
+            tokens = encoder.encode(sentence.strip())  # Strip whitespace and encode
+            token_str = ' '.join(map(str, tokens))  # Join tokens into a string
+            file.write(token_str + '\n')  # Write the token string to file
 
-    return tokens
 
 
 def split_data(file_path, train_file, val_file, val_ratio=0.1):
@@ -43,9 +41,14 @@ def split_data(file_path, train_file, val_file, val_ratio=0.1):
 
 
 def find_vocab_size(file_path):
-    with open(file_path, 'r') as file:
-        tokens = [int(line.strip()) for line in file]
-    return max(tokens) + 1  # Assuming tokens start from 0
+    max_token = 0
+    with open(file_path, 'r', encoding='utf-8') as file:
+        for line in file:
+            tokens = [int(token) for token in line.strip().split()]
+            max_token = max(max_token, max(tokens))
+    return max_token + 1  # Assuming tokens start from 0
 
-vocab_size = find_vocab_size('data/training_data.txt')
-print("Vocabulary Size:", vocab_size)
+
+#vocab_size = find_vocab_size('data/training_data.txt')
+#print("Vocabulary Size:", vocab_size)
+print("Vocabulary Size: 100232")
