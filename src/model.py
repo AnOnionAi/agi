@@ -81,7 +81,8 @@ class GPTModel(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         inputs, targets = batch
-        outputs = self(inputs)
+        inputs = inputs.to(self.device)
+        targets = targets.to(self.device)
         # Reshape outputs to [batch_size * sequence_length, vocab_size]
         outputs = outputs.view(-1, self.vocab_size)
         # Flatten targets to [batch_size * sequence_length]
@@ -92,7 +93,8 @@ class GPTModel(L.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         inputs, targets = batch
-        outputs = self(inputs)
+        inputs = inputs.to(self.device)
+        targets = targets.to(self.device)
         print(f"Validation Step - outputs shape: {outputs.shape}, targets shape: {targets.shape}")  # Debug
         outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
         targets = targets.view(-1)  # Flatten targets
