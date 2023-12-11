@@ -5,22 +5,22 @@ import torch
 
 from encode import encode_file
 from model import GPTModel
-from dataset import TokenizedTextDataset
 
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 
 def train_model():
+
     # Initialize model
     model = GPTModel(
         embed_size=256, 
-        num_layers=6, 
+        num_layers=8, 
         heads=8, 
         forward_expansion=4, 
+        dropout_rate=0.1,
         vocab_size=100232,  # 50257 is size for GPT-2 and 100232 for GPT-4
-        train_dataset=TokenizedTextDataset('data/training_data.txt'),
-        val_dataset=TokenizedTextDataset('data/validation_data.txt'),
-        batch_size=32
+        batch_size=32,
+        trainable_pos_emb=True
     )
 
     # Initialize the TensorBoard logger
@@ -29,9 +29,9 @@ def train_model():
     # Initialize the Trainer with the logger
     trainer = Trainer(
         max_epochs=1,
-        devices=1,
-        accelerator="gpu",
-        logger=logger
+        logger=logger,
+        devices=1 if torch.cuda.is_available() else 1,
+        accelerator="gpu" if torch.cuda.is_available() else 'auto',
     )
     # Train the model
     trainer.fit(model)
