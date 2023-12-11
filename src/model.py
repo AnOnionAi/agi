@@ -9,6 +9,14 @@ from dataset import TokenizedTextDataset
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 
+# Collate function outside the dataset class
+def collate_fn(batch):
+    inputs, targets = zip(*batch)
+    # Pad sequences to the maximum length of sequences in this batch
+    inputs_padded = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=0)
+    targets_padded = torch.nn.utils.rnn.pad_sequence(targets, batch_first=True, padding_value=0)
+    return inputs_padded, targets_padded
+
 class GPTModel(L.LightningModule):
     def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, trainable_pos_emb=False):
         super(GPTModel, self).__init__()
@@ -19,6 +27,7 @@ class GPTModel(L.LightningModule):
         self.vocab_size = vocab_size
         train_dataset = TokenizedTextDataset('data/training_data.txt')
         self.max_len = max(len(sample) for sample in train_dataset)
+        print("Max Length", self.max_len)
         self.batch_size = batch_size
         self.trainable_pos_emb = trainable_pos_emb
 
@@ -91,24 +100,15 @@ class GPTModel(L.LightningModule):
         self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
-    def collate_fn(self, batch):
-        # Separate inputs and targets
-        inputs, targets = zip(*batch)
-
-        # Pad sequences
-        inputs_padded = pad_sequence(inputs, batch_first=True, padding_value=0)
-        targets_padded = pad_sequence(targets, batch_first=True, padding_value=0)
-
-        return inputs_padded, targets_padded
-
+ 
 
     def train_dataloader(self):
         train_dataset = TokenizedTextDataset('data/training_data.txt')
-        return DataLoader(train_dataset, batch_size=self.batch_size, collate_fn=self.collate_fn, num_workers=0, shuffle=True)
+        return DataLoader(train_dataset, batch_size=self.batch_size, collate_fn=collate_fn, shuffle=True, pin_memory=True)
 
     def val_dataloader(self):
         val_dataset = TokenizedTextDataset('data/validation_data.txt')
-        return DataLoader(val_dataset, batch_size=self.batch_size, collate_fn=self.collate_fn, num_workers=0)
+        return DataLoader(val_dataset, batch_size=self.batch_size, collate_fn=collate_fn, pin_memory=True)
 
     def configure_optimizers(self):
         # Create the AdamW optimizer with weight decay

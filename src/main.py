@@ -18,7 +18,8 @@ def train_model():
         heads=8, 
         forward_expansion=4, 
         dropout_rate=0.1,
-        vocab_size=100232,  # 50257 is size for GPT-2 and 100232 for GPT-4
+        #vocab_size=100232,  # 50257 is size for GPT-2 and 100232 for GPT-4
+        vocab_size=50257,
         batch_size=32,
         trainable_pos_emb=True
     )
