@@ -1,5 +1,7 @@
 # main.py
 import argparse
+import os
+import torch
 
 from encode import encode_file
 from model import GPTModel
@@ -27,6 +29,7 @@ def train_model():
     # Inside your train_model function, before initializing the Trainer:
     tpu_cores = None
     if 'TPU_NAME' in os.environ:  # This environment variable is set if a TPU is available
+        print("Using TPU")
         tpu_cores = 8  # Number of TPU cores
 
     # Initialize the Trainer with the logger

@@ -52,6 +52,6 @@ model.load_state_dict(checkpoint['state_dict'])
 model.eval()
 
 # Generate text using the trained model
-input_text = "The quick brown fox"
+input_text = "Why Svelte Good?"
 generated_text = generate_text(input_text, tokenizer, model, max_length=50, temperature=1.0, top_k=50)
 print(generated_text)
