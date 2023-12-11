@@ -26,17 +26,11 @@ def train_model():
     # Initialize the TensorBoard logger
     logger = TensorBoardLogger("tb_logs", name="my_model")
 
-    # Inside your train_model function, before initializing the Trainer:
-    tpu_cores = None
-    if 'TPU_NAME' in os.environ:  # This environment variable is set if a TPU is available
-        print("Using TPU")
-        tpu_cores = 8  # Number of TPU cores
-
     # Initialize the Trainer with the logger
     trainer = Trainer(
         max_epochs=1,
-        tpu_cores=tpu_cores,  # This will be None if no TPU is available, which is fine
-        gpus=1 if torch.cuda.is_available() else None,
+        devices="auto"
+        accelerator="auto"
         logger=logger  # Add logger here
     )
     # Train the model
