@@ -3,6 +3,9 @@ import torch.nn.functional as F
 from model import GPTModel
 import tiktoken
 
+import argparse
+import os
+
 def generate_text(input_text, tokenizer, model, max_length=50, temperature=1.0, top_k=50):
     # Tokenize the input text
     input_ids = tokenizer.encode(input_text)
@@ -32,28 +35,50 @@ def generate_text(input_text, tokenizer, model, max_length=50, temperature=1.0, 
     generated_text = tokenizer.decode(input_ids[0].tolist())
     return generated_text
 
-# Initialize the tokenizer
-tokenizer = tiktoken.encoding_for_model("gpt-4")  # Ensure this matches your model's vocabulary
+def get_latest_checkpoint(version):
+    # Get the directory where the checkpoints are saved
+    checkpoint_dir = f'tb_logs/my_model/version_{version}/checkpoints/'
 
-# Load the trained model with the correct parameters used for training
-model = GPTModel(
-    embed_size=256,
-    num_layers=6,
-    heads=8,
-    forward_expansion=4,
-    dropout_rate=0.1,
-    batch_size=32,
-    #vocab_size=100232,  # Replace with the actual vocab_size used during training
-    vocab_size=50257
-)
+    # Get a list of all checkpoint files
+    checkpoint_files = os.listdir(checkpoint_dir)
 
-# Load the trained model's weights
-checkpoint_path = 'tb_logs/my_model/version_46/checkpoints/epoch=0-step=357.ckpt'
-checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
-model.load_state_dict(checkpoint['state_dict'])
-model.eval()
+    # Sort the checkpoint files by their modification time
+    checkpoint_files.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)))
 
-# Generate text using the trained model
-input_text = "Why Svelte Good?"
-generated_text = generate_text(input_text, tokenizer, model, max_length=50, temperature=1.0, top_k=50)
-print(generated_text)
+    # Get the path of the latest checkpoint file
+    latest_checkpoint = os.path.join(checkpoint_dir, checkpoint_files[-1])
+
+    return latest_checkpoint
+
+def predict_model(input_text, model_version):
+
+    # Initialize the tokenizer
+    tokenizer = tiktoken.encoding_for_model("gpt-4")  # Ensure this matches your model's vocabulary
+
+    # Load the trained model with the correct parameters used for training
+    model = GPTModel(
+        embed_size=256,
+        num_layers=8,  # Adjusted to match the number of layers in the checkpoint
+        heads=8,
+        forward_expansion=4,
+        dropout_rate=0.1,
+        batch_size=32,
+        vocab_size=100232
+    )
+    # If a version is specified, use it to create the checkpoint path
+    if model_version is not None:
+        # Use the function to get the latest checkpoint
+        checkpoint_path = get_latest_checkpoint(model_version)
+    else:
+        # If no version is specified, find the latest version
+        versions = [d for d in os.listdir('tb_logs/my_model') if d.startswith('version_')]
+        versions.sort(key=lambda v: int(v.split('_')[1]), reverse=True)
+        latest_version = versions[0].split('_')[1]
+        checkpoint_path = f'tb_logs/my_model/version_{latest_version}/checkpoints/epoch=0-step=357.ckpt'
+
+    checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
+    model.load_state_dict(checkpoint['state_dict'])
+    model.eval()
+
+    # Generate text using the trained model
+    return generate_text(input_text, tokenizer, model, max_length=50, temperature=1.0, top_k=50)

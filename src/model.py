@@ -2,6 +2,7 @@ import torch
 import lightning as L
 import torch.nn as nn
 import math
+import random
 
 from torch.nn import functional as F
 from layers import GPTTransformerBlock, PositionalEncoding
@@ -25,14 +26,12 @@ class GPTModel(L.LightningModule):
         self.heads = heads
         self.forward_expansion = forward_expansion
         self.vocab_size = vocab_size
-        train_dataset = TokenizedTextDataset('data/training_data.txt')
-        self.max_len = max(len(sample) for sample in train_dataset)
-        print("Max Length", self.max_len)
+        self.max_length = 49
         self.batch_size = batch_size
         self.trainable_pos_emb = trainable_pos_emb
 
         self.embedding = nn.Embedding(self.vocab_size, self.embed_size)
-        self.pos_embedding = self.init_pos_emb(self.trainable_pos_emb)
+        self.pos_embedding = nn.Parameter(torch.zeros(1, 5000, embed_size))  # Add positional embeddings as a parameter
 
         self.layers = nn.ModuleList([
             GPTTransformerBlock(embed_size, heads, forward_expansion, dropout_rate)
@@ -40,25 +39,10 @@ class GPTModel(L.LightningModule):
         ])
         self.output_layer = nn.Linear(embed_size, vocab_size)
 
-    def init_pos_emb(self, trainable):
-        pos_emb = torch.zeros(1, self.max_len, self.embed_size)
-        if trainable:
-            pos_emb = nn.Parameter(pos_emb)
-        return pos_emb
-
     def forward(self, x):
         x = self.embedding(x)
-
-        # Get the current sequence length of the batch
         current_seq_length = x.size(1)
-
-        # Generate positional embeddings for the current batch size
-        pos_emb = self.pos_embedding_sinusoidal(current_seq_length)
-
-        # Add positional embeddings to input embeddings
-        x = x + pos_emb
-
-
+        x = x + self.pos_embedding[:, :current_seq_length]  # Use positional embeddings parameter
         for layer in self.layers:
             x = layer(x)
         x = self.output_layer(x)
@@ -89,7 +73,7 @@ class GPTModel(L.LightningModule):
         loss = F.cross_entropy(outputs, targets)
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
-        
+
     def validation_step(self, batch, batch_idx):
         inputs, targets = batch
         inputs = inputs.to(self.device)
