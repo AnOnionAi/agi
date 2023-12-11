@@ -20,7 +20,7 @@ class GPTModel(lightning.LightningModule):
         self.val_dataset = val_dataset
         self.batch_size = batch_size
         self.vocab_size = vocab_size
-        
+
     def forward(self, x):
         x = self.embed(x)
         x = self.pos_encoding(x)
@@ -51,10 +51,10 @@ class GPTModel(lightning.LightningModule):
         return loss
 
     def train_dataloader(self):
-        return DataLoader(train_dataset, batch_size=32, num_workers=8, persistent_workers=True, shuffle=True)
+        return DataLoader(self.train_dataset, batch_size=32, num_workers=8, persistent_workers=True, shuffle=True)
 
     def val_dataloader(self):
-        return DataLoader(val_dataset, batch_size=32, num_workers=8, persistent_workers=True)
+        return DataLoader(self.val_dataset, batch_size=32, num_workers=8, persistent_workers=True)
     
 
     def configure_optimizers(self):
