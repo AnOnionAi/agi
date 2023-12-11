@@ -49,6 +49,5 @@ def find_vocab_size(file_path):
     return max_token + 1  # Assuming tokens start from 0
 
 
-#vocab_size = find_vocab_size('data/training_data.txt')
-#print("Vocabulary Size:", vocab_size)
-print("Vocabulary Size: 100232")
+vocab_size = find_vocab_size('data/training_data.txt')
+print("Vocabulary Size:", vocab_size)
