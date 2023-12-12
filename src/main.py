@@ -15,7 +15,7 @@ def train_model():
     # Initialize model
     model = GPTModel(
         embed_size=256, 
-        num_layers=8, 
+        num_layers=24, 
         heads=8, 
         forward_expansion=4, 
         dropout_rate=0.1,
