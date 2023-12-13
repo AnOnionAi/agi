@@ -1,84 +1,114 @@
 import torch
 import torch.nn.functional as F
+from torch.distributions import Categorical
 from model import GPTModel
 import tiktoken
-
 import argparse
 import os
-
-def generate_text(input_text, tokenizer, model, max_length=50, temperature=1.0, top_k=50):
-    # Tokenize the input text
-    input_ids = tokenizer.encode(input_text)
-
-    # Convert to tensor and add batch dimension
-    input_ids = torch.tensor([input_ids], dtype=torch.long)
-
-    # Generate text
-    model.eval()
-    with torch.no_grad():
-        for _ in range(max_length):
-            outputs = model(input_ids)
-            logits = outputs[:, -1, :] / temperature
-            probabilities = F.softmax(logits, dim=-1)
-
-            # Apply top-k sampling
-            top_k_probabilities, top_k_indices = torch.topk(probabilities, k=top_k)
-            next_token_id = torch.multinomial(top_k_probabilities, num_samples=1)
-            next_token_id = top_k_indices.gather(-1, next_token_id)
-
-            # Stop generating if end-of-sequence token is produced
-            if next_token_id.item() == tokenizer.eot_token:
-                break
-
-            input_ids = torch.cat((input_ids, next_token_id), dim=-1)
-
-    generated_text = tokenizer.decode(input_ids[0].tolist())
-    return generated_text
+import yaml  
 
 def get_latest_checkpoint(version):
-    # Get the directory where the checkpoints are saved
     checkpoint_dir = f'tb_logs/my_model/version_{version}/checkpoints/'
-
-    # Get a list of all checkpoint files
     checkpoint_files = os.listdir(checkpoint_dir)
-
-    # Sort the checkpoint files by their modification time
-    checkpoint_files.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)))
-
-    # Get the path of the latest checkpoint file
-    latest_checkpoint = os.path.join(checkpoint_dir, checkpoint_files[-1])
-
+    latest_checkpoint = os.path.join(checkpoint_dir, checkpoint_files[0])
     return latest_checkpoint
 
-def predict_model(input_text, model_version):
+def read_hparams(version):
+    hparams_path = f'tb_logs/my_model/version_{version}/hparams.yaml'
+    with open(hparams_path) as file:
+        hparams = yaml.safe_load(file)
+    return hparams
 
-    # Initialize the tokenizer
+def predict_model(input_text, model_version=None):
     tokenizer = tiktoken.encoding_for_model("gpt-4")  # Ensure this matches your model's vocabulary
 
-    # Load the trained model with the correct parameters used for training
-    model = GPTModel(
-        embed_size=256,
-        num_layers=8,  # Adjusted to match the number of layers in the checkpoint
-        heads=8,
-        forward_expansion=4,
-        dropout_rate=0.1,
-        batch_size=32,
-        vocab_size=100232
-    )
-    # If a version is specified, use it to create the checkpoint path
-    if model_version is not None:
-        # Use the function to get the latest checkpoint
-        checkpoint_path = get_latest_checkpoint(model_version)
-    else:
-        # If no version is specified, find the latest version
+    # Use the latest version if no specific version is provided
+    if model_version is None:
         versions = [d for d in os.listdir('tb_logs/my_model') if d.startswith('version_')]
-        versions.sort(key=lambda v: int(v.split('_')[1]), reverse=True)
-        latest_version = versions[0].split('_')[1]
-        checkpoint_path = f'tb_logs/my_model/version_{latest_version}/checkpoints/epoch=0-step=357.ckpt'
+        if versions:
+            versions.sort(key=lambda v: int(v.split('_')[1]), reverse=True)
+            model_version = versions[0].split('_')[1]
+        else:
+            raise Exception("No model versions found.")
+    else:
+        # Explicitly use version 12
+        model_version = '12'  # Hardcoded to version 12 for testing
 
+    print(f'Using model version {model_version}')
+    hparams = read_hparams(model_version)
+    model = GPTModel(
+        embed_size=hparams['embed_size'],
+        num_layers=hparams['num_layers'],
+        heads=hparams['heads'],
+        forward_expansion=hparams['forward_expansion'],
+        dropout_rate=hparams['dropout_rate'],
+        batch_size=hparams['batch_size'],
+        vocab_size=hparams['vocab_size']
+    )
+
+    checkpoint_path = get_latest_checkpoint(model_version)
     checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
     model.load_state_dict(checkpoint['state_dict'])
     model.eval()
 
     # Generate text using the trained model
-    return generate_text(input_text, tokenizer, model, max_length=50, temperature=1.0, top_k=50)
+    generated_text = generate_text(input_text, tokenizer, model)
+    return generated_text
+
+def top_p_filtering(logits, top_p=0.9, filter_value=-float('Inf')):
+    """ Filter a distribution of logits using nucleus (top-p) sampling """
+    assert logits.dim() == 1  # batch size 1 for single word generation
+    sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+
+    # Remove tokens with cumulative probability above the threshold (nucleus)
+    sorted_indices_to_remove = cumulative_probs > top_p
+    # Shift the indices to the right to keep the first token above the threshold
+    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+    sorted_indices_to_remove[..., 0] = 0
+
+    indices_to_remove = sorted_indices[sorted_indices_to_remove]
+    logits[indices_to_remove] = filter_value
+    return logits
+
+def generate_text(input_text, tokenizer, model, max_length=50, temperature=1.0, top_p=0.9):
+    if not input_text.strip():
+        raise ValueError("Input text is empty")
+
+    # Tokenize the input text
+    input_ids = tokenizer.encode(input_text)
+
+    if not input_ids:
+        raise ValueError("Input text could not be tokenized")
+
+    # Convert to tensor and add batch dimension
+    input_ids = torch.tensor([input_ids], dtype=torch.long)
+
+    print(f"Encoded input ids: {input_ids}")  # Debug print
+
+    # Generate text
+    model.eval()
+    with torch.no_grad():
+        for i in range(max_length):
+            outputs = model(input_ids)
+            logits = outputs[:, -1, :] / temperature
+            filtered_logits = top_p_filtering(logits.squeeze(), top_p=top_p)
+
+            # Sample from the filtered distribution
+            probabilities = F.softmax(filtered_logits, dim=-1)
+            next_token_id = Categorical(probabilities).sample()
+
+            # Print the token being added
+            print(f"Step {i}: Next token id: {next_token_id.item()}")  # Debug print
+
+            # Stop generating if end-of-sequence token is produced
+            if next_token_id.item() == tokenizer.eot_token:
+                print("End of sequence token reached.")  # Debug print
+                break
+
+            next_token_id = next_token_id.unsqueeze(0).unsqueeze(0)  # Add two dimensions to make it a 2D tensor
+            input_ids = torch.cat((input_ids, next_token_id), dim=-1)
+
+    generated_text = tokenizer.decode(input_ids[0].tolist())
+    print(f"Generated text: {generated_text}")  # Debug print
+    return generated_text

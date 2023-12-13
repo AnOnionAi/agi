@@ -10,6 +10,8 @@ from predict import predict_model
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 
+max_epochs = 1
+
 def train_model():
 
     # Initialize model
@@ -30,7 +32,7 @@ def train_model():
 
     # Initialize the Trainer with the logger
     trainer = Trainer(
-        max_epochs=1,
+        max_epochs=max_epochs,
         logger=logger,
         devices=1 if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
@@ -47,7 +49,7 @@ def main(args):
         print("Training Complete")
     elif args.command == 'predict':
         input_text = "Why Svelte Good?"
-        predict_model(input_text, 6)
+        predict_model(input_text)
     else:
         print("Invalid command")
 

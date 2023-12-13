@@ -1,9 +1,6 @@
 from torch.utils.data import Dataset
 import torch
 
-from torch.utils.data import Dataset
-import torch
-
 class TokenizedTextDataset(Dataset):
     def __init__(self, file_path, sequence_length=50):
         self.sequence_length = sequence_length
