@@ -21,6 +21,7 @@ def collate_fn(batch):
 class GPTModel(L.LightningModule):
     def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, trainable_pos_emb=False):
         super(GPTModel, self).__init__()
+        self.save_hyperparameters() # Save the model's hyperparameters
         self.embed_size = embed_size
         self.num_layers = num_layers
         self.heads = heads
@@ -79,7 +80,6 @@ class GPTModel(L.LightningModule):
         inputs = inputs.to(self.device)
         targets = targets.to(self.device)
         outputs = self(inputs)  # You need to add this line to generate outputs
-        print(f"Validation Step - outputs shape: {outputs.shape}, targets shape: {targets.shape}")  # Debug
         outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
         targets = targets.view(-1)  # Flatten targets
         loss = F.cross_entropy(outputs, targets)
