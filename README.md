@@ -11,7 +11,10 @@ Predict:
 `poetry run python main.py predict`
 
 Concat the project files so that the project can be seen by the Ai. 
-```cat src/*.py > project_code.py``
+```cat src/*.py > project_code.py```
+
+View Tensorboard
+```tensorboard --logdir=tb_logs --bind_all```
 
 Key Features of the Project:
 
