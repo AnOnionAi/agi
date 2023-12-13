@@ -15,8 +15,6 @@ def encode_file(file_path, output_file):
             token_str = ' '.join(map(str, tokens))  # Join tokens into a string
             file.write(token_str + '\n')  # Write the token string to file
 
-
-
 def split_data(file_path, train_file, val_file, val_ratio=0.1):
     # Read the tokens from the file
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -49,5 +47,5 @@ def find_vocab_size(file_path):
     return max_token + 1  # Assuming tokens start from 0
 
 
-vocab_size = find_vocab_size('data/training_data.txt')
-print("Vocabulary Size:", vocab_size)
+#vocab_size = find_vocab_size('data/training_data.txt')
+#print("Vocabulary Size:", vocab_size)
