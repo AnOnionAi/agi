@@ -29,7 +29,8 @@ def train_model():
 
     # Initialize the TensorBoard logger
     logger = TensorBoardLogger("tb_logs", name="my_model")
-
+    # Training For # of epochs
+    print(f"Training for {max_epochs} epochs")
     # Initialize the Trainer with the logger
     trainer = Trainer(
         max_epochs=max_epochs,
