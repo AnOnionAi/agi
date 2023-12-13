@@ -2,16 +2,20 @@ Welcome to 'AGI' – our ambitious journey towards creating a scaled-down yet po
 
 Our mission is to engineer an AI model that can not only understand and write code in multiple programming languages but also explain its reasoning and logic. The immediate scope of our project centers on Python, with plans to expand into other languages as we progress.
 
+Encode:
+
+`poetry run python src/main.py encode data/raw_data.txt data/training_data.txt`
+
 Train:
 
-`poetry run python main.py train`
+`poetry run python src/main.py train`
 
 Predict:
 
-`poetry run python main.py predict`
+`poetry run python src/main.py predict`
 
 Concat the project files so that the project can be seen by the Ai. 
-```cat src/*.py > project_code.py```
+```cat src/*.py > codebase.py```
 
 View Tensorboard
 ```tensorboard --logdir=tb_logs --bind_all```

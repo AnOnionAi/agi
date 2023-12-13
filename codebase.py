@@ -2,33 +2,46 @@ from torch.utils.data import Dataset
 import torch
 
 class TokenizedTextDataset(Dataset):
-    def __init__(self, file_path, sequence_length=50):
+    def __init__(self, file_path, sequence_length=50, padding_token=0):
+        self.file_path = file_path
         self.sequence_length = sequence_length
-        with open(file_path, 'r') as file:
-            self.lines = file.readlines()
+        self.padding_token = padding_token
+        self.num_lines = self._get_num_lines()
+
+    def _get_num_lines(self):
+        with open(self.file_path, 'r') as file:
+            return sum(1 for line in file)
 
     def __len__(self):
-        return len(self.lines)
+        return self.num_lines
 
     def __getitem__(self, idx):
-        line = self.lines[idx].strip()
-        sequence = list(map(int, line.split()))
+        with open(self.file_path, 'r') as file:
+            for i, line in enumerate(file):
+                if i == idx:
+                    sequence = list(map(int, line.strip().split()))
+                    break
 
-        # Padding or truncating the sequence to the desired length
+        # Padding or truncating the sequence
         if len(sequence) < self.sequence_length:
-            sequence += [0] * (self.sequence_length - len(sequence))  # Padding
+            sequence += [self.padding_token] * (self.sequence_length - len(sequence))
         else:
-            sequence = sequence[:self.sequence_length]  # Truncating
+            sequence = sequence[:self.sequence_length]
+
+        # Generate an attention mask for the sequence
+        attention_mask = [1 if token != self.padding_token else 0 for token in sequence]
 
         input_sequence = torch.tensor(sequence[:-1], dtype=torch.long)
         target_sequence = torch.tensor(sequence[1:], dtype=torch.long)
+        attention_mask = torch.tensor(attention_mask[:-1], dtype=torch.long)  # Same length as input_sequence
 
-        return input_sequence, target_sequence
+        return input_sequence, target_sequence, attention_mask
 import tiktoken
 
 def encode_file(file_path, output_file):
     # Initialize the tokenizer for GPT-4 model
     encoder = tiktoken.encoding_for_model("gpt-4")
+    padding_token_id = encoder.padding_token
 
     # Read the training data, assuming each line in the file is a separate sentence
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -38,9 +51,11 @@ def encode_file(file_path, output_file):
     with open(output_file, 'w', encoding='utf-8') as file:
         for sentence in sentences:
             tokens = encoder.encode(sentence.strip())  # Strip whitespace and encode
+            # Use padding token if needed
+            if padding_token_id is not None:
+                tokens.append(padding_token_id)
             token_str = ' '.join(map(str, tokens))  # Join tokens into a string
             file.write(token_str + '\n')  # Write the token string to file
-
 
 
 def split_data(file_path, train_file, val_file, val_ratio=0.1):
@@ -75,8 +90,8 @@ def find_vocab_size(file_path):
     return max_token + 1  # Assuming tokens start from 0
 
 
-vocab_size = find_vocab_size('data/training_data.txt')
-print("Vocabulary Size:", vocab_size)
+#vocab_size = find_vocab_size('data/training_data.txt')
+#print("Vocabulary Size:", vocab_size)
 import torch
 import torch.nn as nn
 import torch
@@ -123,17 +138,15 @@ import argparse
 import os
 import torch
 
+from torch.cuda.amp import GradScaler
 from encode import encode_file
-from model import GPTModel
+from model import GPTModel, MAX_EPOCHS
 from predict import predict_model
 
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 
-max_epochs = 1
-
 def train_model():
-
     # Initialize model
     model = GPTModel(
         embed_size=512, 
@@ -141,24 +154,31 @@ def train_model():
         heads=16, 
         forward_expansion=4, 
         dropout_rate=0.1,
-        vocab_size=100232, # 50257 is size for GPT-2 and 100232 for GPT-4
+        vocab_size=100232, # Adjust as needed
         batch_size=32,
         trainable_pos_emb=True
     )
 
     # Initialize the TensorBoard logger
     logger = TensorBoardLogger("tb_logs", name="my_model")
-    # Training For # of epochs
-    print(f"Training for {max_epochs} epochs")
-    # Initialize the Trainer with the logger
+
+    # Initialize the GradScaler for mixed precision
+    scaler = GradScaler()
+
+    # Modify Trainer to support AMP
     trainer = Trainer(
-        max_epochs=max_epochs,
+        max_epochs=MAX_EPOCHS,
         logger=logger,
         devices=1 if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
+        precision=16  # Add this line to enable 16-bit precision
     )
-    # Train the model
+
+    # Train the model with AMP
     trainer.fit(model)
+
+    # Optionally save the final model
+    # torch.save(model.state_dict(), 'final_model.pth')
 
 def main(args):
     if args.command == 'encode':
@@ -196,20 +216,27 @@ import lightning as L
 import torch.nn as nn
 import math
 import random
+import torch.optim.lr_scheduler as lr_scheduler
 
+from torch.cuda.amp import autocast
 from torch.nn import functional as F
 from layers import GPTTransformerBlock, PositionalEncoding
 from dataset import TokenizedTextDataset
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 
+global MAX_EPOCHS
+MAX_EPOCHS = 1
+
 # Collate function outside the dataset class
 def collate_fn(batch):
-    inputs, targets = zip(*batch)
-    # Pad sequences to the maximum length of sequences in this batch
-    inputs_padded = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=0)
-    targets_padded = torch.nn.utils.rnn.pad_sequence(targets, batch_first=True, padding_value=0)
-    return inputs_padded, targets_padded
+    inputs, targets, masks = zip(*batch)
+    inputs_padded = pad_sequence(inputs, batch_first=True, padding_value=0)
+    targets_padded = pad_sequence(targets, batch_first=True, padding_value=0)
+    masks_padded = pad_sequence(masks, batch_first=True, padding_value=0)  # Pad attention masks
+
+    return inputs_padded, targets_padded, masks_padded
+
 
 class GPTModel(L.LightningModule):
     def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, trainable_pos_emb=False):
@@ -233,12 +260,12 @@ class GPTModel(L.LightningModule):
         ])
         self.output_layer = nn.Linear(embed_size, vocab_size)
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
         x = self.embedding(x)
         current_seq_length = x.size(1)
         x = x + self.pos_embedding[:, :current_seq_length]  # Use positional embeddings parameter
         for layer in self.layers:
-            x = layer(x)
+            x = layer(x, mask=mask)  # Pass the mask to each layer
         x = self.output_layer(x)
         return x
 
@@ -257,25 +284,25 @@ class GPTModel(L.LightningModule):
         pos_emb = pos_emb.unsqueeze(0)
         return pos_emb
 
-    def training_step(self, batch, batch_idx):
-        inputs, targets = batch
-        inputs = inputs.to(self.device)
-        targets = targets.to(self.device)
-        outputs = self(inputs)  # You need to add this line to generate outputs
-        outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
-        targets = targets.view(-1)  # Flatten targets
-        loss = F.cross_entropy(outputs, targets)
+    def training_step(self, batch):
+        inputs, targets, masks = batch 
+        with autocast():  # Enable automatic mixed precision
+            outputs = self(inputs, mask=masks)  # Pass the masks to the model
+            outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
+            targets = targets.view(-1)  # Flatten targets
+            loss = F.cross_entropy(outputs, targets)
+
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
-    def validation_step(self, batch, batch_idx):
-        inputs, targets = batch
-        inputs = inputs.to(self.device)
-        targets = targets.to(self.device)
-        outputs = self(inputs)  # You need to add this line to generate outputs
-        outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
-        targets = targets.view(-1)  # Flatten targets
-        loss = F.cross_entropy(outputs, targets)
+    def validation_step(self, batch):
+        inputs, targets, masks = batch  # Unpack the attention masks along with inputs and targets
+        with autocast():  # Enable automatic mixed precision
+            outputs = self(inputs, mask=masks)  # Pass the masks to the model during forward pass
+            outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
+            targets = targets.view(-1)  # Flatten targets
+            loss = F.cross_entropy(outputs, targets)
+
         self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
@@ -288,18 +315,48 @@ class GPTModel(L.LightningModule):
         return DataLoader(val_dataset, batch_size=self.batch_size, collate_fn=collate_fn, pin_memory=True)
 
     def configure_optimizers(self):
-        # Create the AdamW optimizer with weight decay
         optimizer = torch.optim.AdamW(self.parameters(), lr=0.0001, weight_decay=0.01)
-        # Optionally, you can add a learning rate scheduler
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.95)
+
+        # Assuming train_dataset is defined and accessible
+        train_dataset = TokenizedTextDataset('data/training_data.txt')
+        num_batches_per_epoch = len(train_dataset) // self.batch_size
+        if len(train_dataset) % self.batch_size != 0:
+            num_batches_per_epoch += 1
+
+        # Use the max_epochs variable you have defined
+        num_epochs = MAX_EPOCHS
+        total_steps = num_epochs * num_batches_per_epoch
+        warmup_steps = int(0.1 * total_steps)  # Example: 10% of total steps for warmup
+
+        scheduler = WarmupCosineLR(optimizer, warmup_steps=warmup_steps, total_steps=total_steps)
+
         return {
             'optimizer': optimizer,
             'lr_scheduler': {
                 'scheduler': scheduler,
-                'interval': 'epoch',
-                'frequency': 1,
+                'interval': 'step',  # 'step' means the scheduler step is called after every batch
             },
-    }
+        }
+
+
+class WarmupCosineLR(torch.optim.lr_scheduler._LRScheduler):
+    def __init__(self, optimizer, warmup_steps, total_steps, min_lr=0.0, last_epoch=-1):
+        self.warmup_steps = warmup_steps
+        self.total_steps = total_steps
+        self.min_lr = min_lr
+        super().__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        if self.last_epoch < self.warmup_steps:
+            lr_scale = self.last_epoch / self.warmup_steps
+        else:
+            progress = (self.last_epoch - self.warmup_steps) / (self.total_steps - self.warmup_steps)
+            lr_scale = 0.5 * (1.0 + torch.cos(torch.tensor(progress, device=self._get_device())))
+
+        return [base_lr * lr_scale + self.min_lr for base_lr in self.base_lrs]
+
+    def _get_device(self):
+        return self.optimizer.param_groups[0]['params'][0].device
 import torch
 import torch.nn.functional as F
 from torch.distributions import Categorical

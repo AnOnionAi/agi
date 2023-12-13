@@ -3,20 +3,27 @@ import lightning as L
 import torch.nn as nn
 import math
 import random
+import torch.optim.lr_scheduler as lr_scheduler
 
+from torch.cuda.amp import autocast
 from torch.nn import functional as F
 from layers import GPTTransformerBlock, PositionalEncoding
 from dataset import TokenizedTextDataset
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 
+global MAX_EPOCHS
+MAX_EPOCHS = 1
+
 # Collate function outside the dataset class
 def collate_fn(batch):
-    inputs, targets = zip(*batch)
-    # Pad sequences to the maximum length of sequences in this batch
-    inputs_padded = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=0)
-    targets_padded = torch.nn.utils.rnn.pad_sequence(targets, batch_first=True, padding_value=0)
-    return inputs_padded, targets_padded
+    inputs, targets, masks = zip(*batch)
+    inputs_padded = pad_sequence(inputs, batch_first=True, padding_value=0)
+    targets_padded = pad_sequence(targets, batch_first=True, padding_value=0)
+    masks_padded = pad_sequence(masks, batch_first=True, padding_value=0)  # Pad attention masks
+
+    return inputs_padded, targets_padded, masks_padded
+
 
 class GPTModel(L.LightningModule):
     def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, trainable_pos_emb=False):
@@ -40,12 +47,19 @@ class GPTModel(L.LightningModule):
         ])
         self.output_layer = nn.Linear(embed_size, vocab_size)
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
         x = self.embedding(x)
         current_seq_length = x.size(1)
+        
         x = x + self.pos_embedding[:, :current_seq_length]  # Use positional embeddings parameter
+
+        # Expand the 2D attention mask to a 3D attention mask
+        if mask is not None:
+            mask = mask.unsqueeze(1).repeat(1, self.heads, 1, 1)
+
         for layer in self.layers:
-            x = layer(x)
+            x = layer(x, mask=mask)  # Pass the mask to each layer
+
         x = self.output_layer(x)
         return x
 
@@ -64,25 +78,25 @@ class GPTModel(L.LightningModule):
         pos_emb = pos_emb.unsqueeze(0)
         return pos_emb
 
-    def training_step(self, batch, batch_idx):
-        inputs, targets = batch
-        inputs = inputs.to(self.device)
-        targets = targets.to(self.device)
-        outputs = self(inputs)  # You need to add this line to generate outputs
-        outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
-        targets = targets.view(-1)  # Flatten targets
-        loss = F.cross_entropy(outputs, targets)
+    def training_step(self, batch):
+        inputs, targets, masks = batch 
+        with autocast():  # Enable automatic mixed precision
+            outputs = self(inputs, mask=masks)  # Pass the masks to the model
+            outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
+            targets = targets.view(-1)  # Flatten targets
+            loss = F.cross_entropy(outputs, targets)
+
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
-    def validation_step(self, batch, batch_idx):
-        inputs, targets = batch
-        inputs = inputs.to(self.device)
-        targets = targets.to(self.device)
-        outputs = self(inputs)  # You need to add this line to generate outputs
-        outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
-        targets = targets.view(-1)  # Flatten targets
-        loss = F.cross_entropy(outputs, targets)
+    def validation_step(self, batch):
+        inputs, targets, masks = batch  # Unpack the attention masks along with inputs and targets
+        with autocast():  # Enable automatic mixed precision
+            outputs = self(inputs, mask=masks)  # Pass the masks to the model during forward pass
+            outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
+            targets = targets.view(-1)  # Flatten targets
+            loss = F.cross_entropy(outputs, targets)
+
         self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
@@ -95,15 +109,45 @@ class GPTModel(L.LightningModule):
         return DataLoader(val_dataset, batch_size=self.batch_size, collate_fn=collate_fn, pin_memory=True)
 
     def configure_optimizers(self):
-        # Create the AdamW optimizer with weight decay
         optimizer = torch.optim.AdamW(self.parameters(), lr=0.0001, weight_decay=0.01)
-        # Optionally, you can add a learning rate scheduler
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.95)
+
+        # Assuming train_dataset is defined and accessible
+        train_dataset = TokenizedTextDataset('data/training_data.txt')
+        num_batches_per_epoch = len(train_dataset) // self.batch_size
+        if len(train_dataset) % self.batch_size != 0:
+            num_batches_per_epoch += 1
+
+        # Use the max_epochs variable you have defined
+        num_epochs = MAX_EPOCHS
+        total_steps = num_epochs * num_batches_per_epoch
+        warmup_steps = int(0.1 * total_steps)  # Example: 10% of total steps for warmup
+
+        scheduler = WarmupCosineLR(optimizer, warmup_steps=warmup_steps, total_steps=total_steps)
+
         return {
             'optimizer': optimizer,
             'lr_scheduler': {
                 'scheduler': scheduler,
-                'interval': 'epoch',
-                'frequency': 1,
+                'interval': 'step',  # 'step' means the scheduler step is called after every batch
             },
-    }
+        }
+
+
+class WarmupCosineLR(torch.optim.lr_scheduler._LRScheduler):
+    def __init__(self, optimizer, warmup_steps, total_steps, min_lr=0.0, last_epoch=-1):
+        self.warmup_steps = warmup_steps
+        self.total_steps = total_steps
+        self.min_lr = min_lr
+        super().__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        if self.last_epoch < self.warmup_steps:
+            lr_scale = self.last_epoch / self.warmup_steps
+        else:
+            progress = (self.last_epoch - self.warmup_steps) / (self.total_steps - self.warmup_steps)
+            lr_scale = 0.5 * (1.0 + torch.cos(torch.tensor(progress, device=self._get_device())))
+
+        return [base_lr * lr_scale + self.min_lr for base_lr in self.base_lrs]
+
+    def _get_device(self):
+        return self.optimizer.param_groups[0]['params'][0].device
