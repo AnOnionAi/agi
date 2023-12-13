@@ -14,9 +14,9 @@ def train_model():
 
     # Initialize model
     model = GPTModel(
-        embed_size=256, 
+        embed_size=512, 
         num_layers=24, 
-        heads=8, 
+        heads=16, 
         forward_expansion=4, 
         dropout_rate=0.1,
         #vocab_size=100232,  # 50257 is size for GPT-2 and 100232 for GPT-4
