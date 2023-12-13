@@ -10,7 +10,7 @@ from predict import predict_model
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 
-max_epochs = 1
+max_epochs = 10
 
 def train_model():
 
