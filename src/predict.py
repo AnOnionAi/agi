@@ -106,9 +106,11 @@ def generate_text(input_text, tokenizer, model, max_length=50, temperature=1.0, 
                 print("End of sequence token reached.")  # Debug print
                 break
 
+            # Add batch dimension to make it a 2D tensor
             next_token_id = next_token_id.unsqueeze(0).unsqueeze(0)  # Add two dimensions to make it a 2D tensor
             input_ids = torch.cat((input_ids, next_token_id), dim=-1)
 
     generated_text = tokenizer.decode(input_ids[0].tolist())
     print(f"Generated text: {generated_text}")  # Debug print
     return generated_text
+
