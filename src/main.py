@@ -10,7 +10,7 @@ from predict import predict_model
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 
-max_epochs = 10
+max_epochs = 1
 
 def train_model():
 
@@ -21,8 +21,7 @@ def train_model():
         heads=16, 
         forward_expansion=4, 
         dropout_rate=0.1,
-        #vocab_size=100232,  # 50257 is size for GPT-2 and 100232 for GPT-4
-        vocab_size=100232,
+        vocab_size=100232, # 50257 is size for GPT-2 and 100232 for GPT-4
         batch_size=32,
         trainable_pos_emb=True
     )
