@@ -33,10 +33,6 @@ class TokenizedTextDataset(Dataset):
 
         input_sequence = torch.tensor(sequence[:-1], dtype=torch.long)
         target_sequence = torch.tensor(sequence[1:], dtype=torch.long)
-        attention_mask = torch.tensor(attention_mask[:-1], dtype=torch.long)
-        attention_mask = attention_mask.to(torch.bool)
-
-        # Convert the 1D attention mask to a 2D attention mask
-        attention_mask = attention_mask.unsqueeze(0).repeat(self.sequence_length-1, 1)
+        attention_mask = torch.tensor(attention_mask[:-1], dtype=torch.float)
 
         return input_sequence, target_sequence, attention_mask

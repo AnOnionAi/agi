@@ -26,7 +26,7 @@ def collate_fn(batch):
 
 
 class GPTModel(L.LightningModule):
-    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, trainable_pos_emb=False):
+    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, max_length, trainable_pos_emb=False):
         super(GPTModel, self).__init__()
         self.save_hyperparameters() # Save the model's hyperparameters
         self.embed_size = embed_size
@@ -34,7 +34,7 @@ class GPTModel(L.LightningModule):
         self.heads = heads
         self.forward_expansion = forward_expansion
         self.vocab_size = vocab_size
-        self.max_length = 49
+        self.max_length = max_length
         self.batch_size = batch_size
         self.trainable_pos_emb = trainable_pos_emb
 
@@ -47,20 +47,46 @@ class GPTModel(L.LightningModule):
         ])
         self.output_layer = nn.Linear(embed_size, vocab_size)
 
-    def forward(self, x, mask=None):
-        x = self.embedding(x)
-        current_seq_length = x.size(1)
-        
-        x = x + self.pos_embedding[:, :current_seq_length]  # Use positional embeddings parameter
+    def create_mask(self, mask, current_seq_length):
+        if torch.isnan(mask).any() or torch.isinf(mask).any():
+            print("NaN or inf value detected in mask at start of create_mask")
+        # Expand mask for the number of heads and sequence length
+        mask = mask.unsqueeze(1).unsqueeze(2)  # Now [batch_size, 1, 1, seq_len]
+        mask = mask.repeat(1, self.heads, current_seq_length, 1)  # Now [batch_size, num_heads, seq_len, seq_len]
 
-        # Expand the 2D attention mask to a 3D attention mask
+        # Reshape to [batch_size * num_heads, seq_len, seq_len]
+        mask = mask.view(self.batch_size * self.heads, current_seq_length, current_seq_length)
+
+        if torch.isnan(mask).any() or torch.isinf(mask).any():
+            print("NaN or inf value detected in mask at end of create_mask")
+
+        return mask
+
+    def forward(self, x, mask=None):
+
+        x = self.embedding(x)
+
+        current_seq_length = x.size(1)
+
+        # Add positional embeddings
+        x = x + self.pos_embedding[:, :current_seq_length]
+
+        # Transpose x to have shape (sequence_length, batch_size, embed_size)
+        x = x.transpose(0, 1)
+
+        # Adjust the mask for multi-head attention
         if mask is not None:
-            mask = mask.unsqueeze(1).repeat(1, self.heads, 1, 1)
+            mask = self.create_mask(mask, current_seq_length)
 
         for layer in self.layers:
             x = layer(x, mask=mask)  # Pass the mask to each layer
+            if torch.isnan(x).any() or torch.isinf(x).any():
+                print("NaN or inf value detected after layer")
 
         x = self.output_layer(x)
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            print("NaN or inf value detected after output layer")
+
         return x
 
     def pos_embedding_sinusoidal(self, sequence_length):
@@ -80,6 +106,7 @@ class GPTModel(L.LightningModule):
 
     def training_step(self, batch):
         inputs, targets, masks = batch 
+
         with autocast():  # Enable automatic mixed precision
             outputs = self(inputs, mask=masks)  # Pass the masks to the model
             outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
@@ -90,6 +117,7 @@ class GPTModel(L.LightningModule):
         return loss
 
     def validation_step(self, batch):
+        
         inputs, targets, masks = batch  # Unpack the attention masks along with inputs and targets
         with autocast():  # Enable automatic mixed precision
             outputs = self(inputs, mask=masks)  # Pass the masks to the model during forward pass
@@ -101,6 +129,7 @@ class GPTModel(L.LightningModule):
         return loss
 
     def train_dataloader(self):
+        
         train_dataset = TokenizedTextDataset('data/training_data.txt')
         return DataLoader(train_dataset, batch_size=self.batch_size, collate_fn=collate_fn, shuffle=True, pin_memory=True)
 

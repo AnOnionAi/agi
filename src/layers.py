@@ -33,9 +33,22 @@ class GPTTransformerBlock(nn.Module):
         )
 
     def forward(self, x, mask=None):
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            print("NaN or inf value detected in input to GPTTransformerBlock")
         attention_output, _ = self.attention(x, x, x, attn_mask=mask)
-        x = self.norm1(self.dropout(attention_output) + x)  # Apply dropout after attention
-        forward_output = self.feed_forward(x)
-        out = self.norm2(self.dropout(forward_output) + x)  # Apply dropout after feed-forward network
-        return out
+        if torch.isnan(attention_output).any() or torch.isinf(attention_output).any():
+            print("NaN or inf value detected after attention")
 
+        x = self.norm1(self.dropout(attention_output) + x)  # Apply dropout after attention
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            print("NaN or inf value detected after norm1 and dropout")
+
+        forward_output = self.feed_forward(x)
+        if torch.isnan(forward_output).any() or torch.isinf(forward_output).any():
+            print("NaN or inf value detected after feed_forward")
+
+        out = self.norm2(self.dropout(forward_output) + x)  # Apply dropout after feed-forward network
+        if torch.isnan(out).any() or torch.isinf(out).any():
+            print("NaN or inf value detected after norm2 and dropout")
+
+        return out

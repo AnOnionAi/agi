@@ -21,6 +21,7 @@ def train_model():
         dropout_rate=0.1,
         vocab_size=100232, # Adjust as needed
         batch_size=32,
+        max_length=50,
         trainable_pos_emb=True
     )
 

@@ -33,7 +33,7 @@ class TokenizedTextDataset(Dataset):
 
         input_sequence = torch.tensor(sequence[:-1], dtype=torch.long)
         target_sequence = torch.tensor(sequence[1:], dtype=torch.long)
-        attention_mask = torch.tensor(attention_mask[:-1], dtype=torch.long)  # Same length as input_sequence
+        attention_mask = torch.tensor(attention_mask[:-1], dtype=torch.bool)
 
         return input_sequence, target_sequence, attention_mask
 import tiktoken
@@ -41,7 +41,6 @@ import tiktoken
 def encode_file(file_path, output_file):
     # Initialize the tokenizer for GPT-4 model
     encoder = tiktoken.encoding_for_model("gpt-4")
-    padding_token_id = encoder.padding_token
 
     # Read the training data, assuming each line in the file is a separate sentence
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -51,12 +50,8 @@ def encode_file(file_path, output_file):
     with open(output_file, 'w', encoding='utf-8') as file:
         for sentence in sentences:
             tokens = encoder.encode(sentence.strip())  # Strip whitespace and encode
-            # Use padding token if needed
-            if padding_token_id is not None:
-                tokens.append(padding_token_id)
             token_str = ' '.join(map(str, tokens))  # Join tokens into a string
             file.write(token_str + '\n')  # Write the token string to file
-
 
 def split_data(file_path, train_file, val_file, val_ratio=0.1):
     # Read the tokens from the file
@@ -132,7 +127,6 @@ class GPTTransformerBlock(nn.Module):
         forward_output = self.feed_forward(x)
         out = self.norm2(self.dropout(forward_output) + x)  # Apply dropout after feed-forward network
         return out
-
 # main.py
 import argparse
 import os
@@ -156,6 +150,7 @@ def train_model():
         dropout_rate=0.1,
         vocab_size=100232, # Adjust as needed
         batch_size=32,
+        max_length=50,
         trainable_pos_emb=True
     )
 
@@ -171,7 +166,7 @@ def train_model():
         logger=logger,
         devices=1 if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
-        precision=16  # Add this line to enable 16-bit precision
+        precision=32  # Add this line to enable 16-bit precision
     )
 
     # Train the model with AMP
@@ -239,7 +234,7 @@ def collate_fn(batch):
 
 
 class GPTModel(L.LightningModule):
-    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, trainable_pos_emb=False):
+    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, max_length, trainable_pos_emb=False):
         super(GPTModel, self).__init__()
         self.save_hyperparameters() # Save the model's hyperparameters
         self.embed_size = embed_size
@@ -247,7 +242,7 @@ class GPTModel(L.LightningModule):
         self.heads = heads
         self.forward_expansion = forward_expansion
         self.vocab_size = vocab_size
-        self.max_length = 49
+        self.max_length = max_length
         self.batch_size = batch_size
         self.trainable_pos_emb = trainable_pos_emb
 
@@ -260,12 +255,33 @@ class GPTModel(L.LightningModule):
         ])
         self.output_layer = nn.Linear(embed_size, vocab_size)
 
+    def create_mask(self, mask, current_seq_length):
+        # Expand mask for the number of heads and sequence length
+        mask = mask.unsqueeze(1).unsqueeze(2)  # Now [batch_size, 1, 1, seq_len]
+        mask = mask.repeat(1, self.heads, current_seq_length, 1)  # Now [batch_size, num_heads, seq_len, seq_len]
+
+        # Reshape to [batch_size * num_heads, seq_len, seq_len]
+        mask = mask.view(self.batch_size * self.heads, current_seq_length, current_seq_length)
+
+        return mask
+
     def forward(self, x, mask=None):
         x = self.embedding(x)
         current_seq_length = x.size(1)
-        x = x + self.pos_embedding[:, :current_seq_length]  # Use positional embeddings parameter
+
+        # Add positional embeddings
+        x = x + self.pos_embedding[:, :current_seq_length]
+
+        # Transpose x to have shape (sequence_length, batch_size, embed_size)
+        x = x.transpose(0, 1)
+
+        # Adjust the mask for multi-head attention
+        if mask is not None:
+            mask = self.create_mask(mask, current_seq_length)
+
         for layer in self.layers:
             x = layer(x, mask=mask)  # Pass the mask to each layer
+
         x = self.output_layer(x)
         return x
 
@@ -286,6 +302,7 @@ class GPTModel(L.LightningModule):
 
     def training_step(self, batch):
         inputs, targets, masks = batch 
+
         with autocast():  # Enable automatic mixed precision
             outputs = self(inputs, mask=masks)  # Pass the masks to the model
             outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
@@ -296,6 +313,7 @@ class GPTModel(L.LightningModule):
         return loss
 
     def validation_step(self, batch):
+        
         inputs, targets, masks = batch  # Unpack the attention masks along with inputs and targets
         with autocast():  # Enable automatic mixed precision
             outputs = self(inputs, mask=masks)  # Pass the masks to the model during forward pass
@@ -307,6 +325,7 @@ class GPTModel(L.LightningModule):
         return loss
 
     def train_dataloader(self):
+        
         train_dataset = TokenizedTextDataset('data/training_data.txt')
         return DataLoader(train_dataset, batch_size=self.batch_size, collate_fn=collate_fn, shuffle=True, pin_memory=True)
 
