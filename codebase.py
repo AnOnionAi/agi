@@ -93,20 +93,27 @@ import torch
 import math
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, embed_size, max_len=5000):
+    def __init__(self, embed_size, max_len=5000, learnable=True):
         super(PositionalEncoding, self).__init__()
+        self.learnable = learnable
+
+        # Initial sinusoidal positional encoding
         pe = torch.zeros(max_len, embed_size)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, embed_size, 2).float() * (-math.log(10000.0) / embed_size))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0).transpose(0, 1)
-        self.register_buffer('pe', pe)
+
+        # Register as a buffer or a learnable parameter
+        if self.learnable:
+            self.pe = nn.Parameter(pe)  # Learnable positional embeddings
+        else:
+            self.register_buffer('pe', pe)  # Fixed sinusoidal embeddings
 
     def forward(self, x):
         x = x + self.pe[:x.size(0), :]
         return x
-
 
 class GPTTransformerBlock(nn.Module):
     def __init__(self, embed_size, heads, forward_expansion, dropout_rate):
@@ -383,7 +390,7 @@ import os
 import yaml  
 
 def get_latest_checkpoint(version):
-    checkpoint_dir = f'tb_logs/my_model/version_{version}/checkpoints/'
+    checkpoint_dir = f'tb_logs/gpt/version_{version}/checkpoints/'
     checkpoint_files = os.listdir(checkpoint_dir)
     latest_checkpoint = os.path.join(checkpoint_dir, checkpoint_files[0])
     return latest_checkpoint
@@ -420,6 +427,7 @@ def predict_model(input_text, model_version=None):
         batch_size=hparams['batch_size'],
         vocab_size=hparams['vocab_size'],
         sequence_length=hparams['sequence_length'],
+        max_epochs=hparams['max_epochs']
     )
 
     checkpoint_path = get_latest_checkpoint(model_version)
@@ -433,6 +441,8 @@ def predict_model(input_text, model_version=None):
 
 def top_p_filtering(logits, top_p=0.9, filter_value=-float('Inf')):
     """ Filter a distribution of logits using nucleus (top-p) sampling """
+    print(logits.shape)
+
     assert logits.dim() == 1  # batch size 1 for single word generation
     sorted_logits, sorted_indices = torch.sort(logits, descending=True)
     cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
@@ -467,15 +477,12 @@ def generate_text(input_text, tokenizer, model, temperature=1.0, top_p=0.9):
     with torch.no_grad():
         for i in range(model.sequence_length):
             outputs = model(input_ids)
-            logits = outputs[:, -1, :] / temperature
-            filtered_logits = top_p_filtering(logits.squeeze(), top_p=top_p)
+            logits = outputs[0, -1, :] / temperature  # Select the logits for the last word in the sequence
+            filtered_logits = top_p_filtering(logits, top_p=top_p)
 
             # Sample from the filtered distribution
             probabilities = F.softmax(filtered_logits, dim=-1)
             next_token_id = Categorical(probabilities).sample()
-
-            # Print the token being added
-            print(f"Step {i}: Next token id: {next_token_id.item()}")  # Debug print
 
             # Stop generating if end-of-sequence token is produced
             if next_token_id.item() == tokenizer.eot_token:
