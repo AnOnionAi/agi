@@ -163,3 +163,8 @@ cython_debug/
 # Deep Learning
 tb_logs/
 *.pth
+*.pkl
+*.h5
+*.log
+*.ckpt
+*.ckpt.*

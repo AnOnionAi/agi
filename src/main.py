@@ -1,6 +1,5 @@
 # main.py
 import argparse
-import os
 import torch
 
 from torch.cuda.amp import GradScaler
@@ -22,7 +21,7 @@ def train_model():
         vocab_size=100232, # Adjust as needed
         batch_size=32,
         sequence_length=64, 
-        max_epochs=1,
+        max_epochs=10,
         trainable_pos_emb=True
     )
 
@@ -32,9 +31,11 @@ def train_model():
     trainer = Trainer(
         max_epochs=model.max_epochs,
         logger=logger,
+        #limit_train_batches=0.1,  # Reduce training data to speed up training
+        #limit_val_batches=0.1,  # Reduce validation data to speed up validation
         devices=1 if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
-        precision=16  # Add this line to enable 16-bit precision mixed precision (AMP)
+        precision='16-mixed'  # Add this line to enable 16-bit precision mixed precision (AMP)
     )
 
     # Train the model with AMP

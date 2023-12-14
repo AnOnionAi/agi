@@ -52,22 +52,18 @@ class GPTModel(L.LightningModule):
         self.output_layer = nn.Linear(embed_size, vocab_size)
 
     def create_mask(self, mask, current_seq_length):
-
         # Expand mask for the number of heads and sequence length
-        mask = mask.unsqueeze(1).unsqueeze(2)  # Now [batch_size, 1, 1, seq_len]
-        mask = mask.repeat(1, self.heads, current_seq_length, 1)  # Now [batch_size, num_heads, seq_len, seq_len]
-
-        # Reshape to [batch_size * num_heads, seq_len, seq_len]
-        mask = mask.view(self.batch_size * self.heads, current_seq_length, current_seq_length)
-
+        mask = mask.unsqueeze(1)  # Now [batch_size, 1, seq_len]
+        mask = mask.repeat(1, self.heads, 1)  # Now [batch_size, num_heads, seq_len]
+        mask = mask.view(self.batch_size * self.heads, 1, current_seq_length)  # Now [batch_size*num_heads, 1, seq_len]
+        mask = mask.repeat(1, current_seq_length, 1)  # Now [batch_size*num_heads, seq_len, seq_len]
+        
         return mask
 
     def forward(self, x, mask=None):
 
         x = self.embedding(x)
-
         current_seq_length = x.size(1)
-
         # Add positional embeddings
         x = x + self.pos_embedding[:, :current_seq_length]
 
