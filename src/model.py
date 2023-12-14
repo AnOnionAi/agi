@@ -12,9 +12,6 @@ from dataset import TokenizedTextDataset
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 
-global MAX_EPOCHS
-MAX_EPOCHS = 1
-
 # Collate function outside the dataset class
 def collate_fn(batch):
     inputs, targets, masks = zip(*batch)
@@ -26,7 +23,7 @@ def collate_fn(batch):
 
 
 class GPTModel(L.LightningModule):
-    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, max_length, trainable_pos_emb=False):
+    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, sequence_length, max_epochs, trainable_pos_emb=False):
         super(GPTModel, self).__init__()
         self.save_hyperparameters() # Save the model's hyperparameters
         self.embed_size = embed_size
@@ -34,9 +31,16 @@ class GPTModel(L.LightningModule):
         self.heads = heads
         self.forward_expansion = forward_expansion
         self.vocab_size = vocab_size
-        self.max_length = max_length
         self.batch_size = batch_size
+        self.sequence_length = sequence_length
+        self.max_epochs = max_epochs
         self.trainable_pos_emb = trainable_pos_emb
+
+        # Example input array (adjust the shape according to your model's input)
+        self.example_input_array = torch.zeros((1, sequence_length), dtype=torch.long)
+
+        with open('data/training_data.txt', 'r') as f:
+            self.dataset_length = sum(1 for _ in f)
 
         self.embedding = nn.Embedding(self.vocab_size, self.embed_size)
         self.pos_embedding = nn.Parameter(torch.zeros(1, 5000, embed_size))  # Add positional embeddings as a parameter
@@ -48,17 +52,13 @@ class GPTModel(L.LightningModule):
         self.output_layer = nn.Linear(embed_size, vocab_size)
 
     def create_mask(self, mask, current_seq_length):
-        if torch.isnan(mask).any() or torch.isinf(mask).any():
-            print("NaN or inf value detected in mask at start of create_mask")
+
         # Expand mask for the number of heads and sequence length
         mask = mask.unsqueeze(1).unsqueeze(2)  # Now [batch_size, 1, 1, seq_len]
         mask = mask.repeat(1, self.heads, current_seq_length, 1)  # Now [batch_size, num_heads, seq_len, seq_len]
 
         # Reshape to [batch_size * num_heads, seq_len, seq_len]
         mask = mask.view(self.batch_size * self.heads, current_seq_length, current_seq_length)
-
-        if torch.isnan(mask).any() or torch.isinf(mask).any():
-            print("NaN or inf value detected in mask at end of create_mask")
 
         return mask
 
@@ -80,12 +80,8 @@ class GPTModel(L.LightningModule):
 
         for layer in self.layers:
             x = layer(x, mask=mask)  # Pass the mask to each layer
-            if torch.isnan(x).any() or torch.isinf(x).any():
-                print("NaN or inf value detected after layer")
 
         x = self.output_layer(x)
-        if torch.isnan(x).any() or torch.isinf(x).any():
-            print("NaN or inf value detected after output layer")
 
         return x
 
@@ -107,48 +103,40 @@ class GPTModel(L.LightningModule):
     def training_step(self, batch):
         inputs, targets, masks = batch 
 
-        with autocast():  # Enable automatic mixed precision
-            outputs = self(inputs, mask=masks)  # Pass the masks to the model
-            outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
-            targets = targets.view(-1)  # Flatten targets
-            loss = F.cross_entropy(outputs, targets)
+        outputs = self(inputs, mask=masks)  # Pass the masks to the model
+        outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
+        targets = targets.view(-1)  # Flatten targets
+        loss = F.cross_entropy(outputs, targets)
 
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
     def validation_step(self, batch):
-        
         inputs, targets, masks = batch  # Unpack the attention masks along with inputs and targets
-        with autocast():  # Enable automatic mixed precision
-            outputs = self(inputs, mask=masks)  # Pass the masks to the model during forward pass
-            outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
-            targets = targets.view(-1)  # Flatten targets
-            loss = F.cross_entropy(outputs, targets)
+        outputs = self(inputs, mask=masks)  # Pass the masks to the model during forward pass
+        outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
+        targets = targets.view(-1)  # Flatten targets
+        loss = F.cross_entropy(outputs, targets)
 
         self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
     def train_dataloader(self):
-        
-        train_dataset = TokenizedTextDataset('data/training_data.txt')
+        train_dataset = TokenizedTextDataset('data/training_data.txt', self.sequence_length)
         return DataLoader(train_dataset, batch_size=self.batch_size, collate_fn=collate_fn, shuffle=True, pin_memory=True)
 
     def val_dataloader(self):
-        val_dataset = TokenizedTextDataset('data/validation_data.txt')
+        val_dataset = TokenizedTextDataset('data/validation_data.txt', self.sequence_length)
         return DataLoader(val_dataset, batch_size=self.batch_size, collate_fn=collate_fn, pin_memory=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=0.0001, weight_decay=0.01)
 
-        # Assuming train_dataset is defined and accessible
-        train_dataset = TokenizedTextDataset('data/training_data.txt')
-        num_batches_per_epoch = len(train_dataset) // self.batch_size
-        if len(train_dataset) % self.batch_size != 0:
+        num_batches_per_epoch = self.dataset_length // self.batch_size
+        if self.dataset_length % self.batch_size != 0:
             num_batches_per_epoch += 1
 
-        # Use the max_epochs variable you have defined
-        num_epochs = MAX_EPOCHS
-        total_steps = num_epochs * num_batches_per_epoch
+        total_steps = self.max_epochs * num_batches_per_epoch
         warmup_steps = int(0.1 * total_steps)  # Example: 10% of total steps for warmup
 
         scheduler = WarmupCosineLR(optimizer, warmup_steps=warmup_steps, total_steps=total_steps)

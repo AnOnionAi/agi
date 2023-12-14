@@ -5,7 +5,7 @@ import torch
 
 from torch.cuda.amp import GradScaler
 from encode import encode_file
-from model import GPTModel, MAX_EPOCHS
+from model import GPTModel
 from predict import predict_model
 
 from lightning.pytorch import Trainer
@@ -21,30 +21,28 @@ def train_model():
         dropout_rate=0.1,
         vocab_size=100232, # Adjust as needed
         batch_size=32,
-        max_length=50,
+        sequence_length=64, 
+        max_epochs=1,
         trainable_pos_emb=True
     )
 
     # Initialize the TensorBoard logger
-    logger = TensorBoardLogger("tb_logs", name="my_model")
+    logger = TensorBoardLogger("tb_logs", name="gpt", log_graph=True)
 
-    # Initialize the GradScaler for mixed precision
-    scaler = GradScaler()
-
-    # Modify Trainer to support AMP
     trainer = Trainer(
-        max_epochs=MAX_EPOCHS,
+        max_epochs=model.max_epochs,
         logger=logger,
         devices=1 if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
-        precision=16  # Add this line to enable 16-bit precision
+        precision=16  # Add this line to enable 16-bit precision mixed precision (AMP)
     )
 
     # Train the model with AMP
     trainer.fit(model)
+    logger.save()  # Save the TensorBoard logs
 
     # Optionally save the final model
-    # torch.save(model.state_dict(), 'final_model.pth')
+    torch.save(model.state_dict(), 'final_model.pth')
 
 def main(args):
     if args.command == 'encode':

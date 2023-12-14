@@ -2,7 +2,7 @@ from torch.utils.data import Dataset
 import torch
 
 class TokenizedTextDataset(Dataset):
-    def __init__(self, file_path, sequence_length=50, padding_token=0):
+    def __init__(self, file_path, sequence_length, padding_token=0):
         self.file_path = file_path
         self.sequence_length = sequence_length
         self.padding_token = padding_token

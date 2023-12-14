@@ -2,7 +2,7 @@ from torch.utils.data import Dataset
 import torch
 
 class TokenizedTextDataset(Dataset):
-    def __init__(self, file_path, sequence_length=50, padding_token=0):
+    def __init__(self, file_path, sequence_length, padding_token=0):
         self.file_path = file_path
         self.sequence_length = sequence_length
         self.padding_token = padding_token
@@ -33,7 +33,7 @@ class TokenizedTextDataset(Dataset):
 
         input_sequence = torch.tensor(sequence[:-1], dtype=torch.long)
         target_sequence = torch.tensor(sequence[1:], dtype=torch.long)
-        attention_mask = torch.tensor(attention_mask[:-1], dtype=torch.bool)
+        attention_mask = torch.tensor(attention_mask[:-1], dtype=torch.float)
 
         return input_sequence, target_sequence, attention_mask
 import tiktoken
@@ -126,6 +126,7 @@ class GPTTransformerBlock(nn.Module):
         x = self.norm1(self.dropout(attention_output) + x)  # Apply dropout after attention
         forward_output = self.feed_forward(x)
         out = self.norm2(self.dropout(forward_output) + x)  # Apply dropout after feed-forward network
+
         return out
 # main.py
 import argparse
@@ -134,7 +135,7 @@ import torch
 
 from torch.cuda.amp import GradScaler
 from encode import encode_file
-from model import GPTModel, MAX_EPOCHS
+from model import GPTModel
 from predict import predict_model
 
 from lightning.pytorch import Trainer
@@ -150,30 +151,28 @@ def train_model():
         dropout_rate=0.1,
         vocab_size=100232, # Adjust as needed
         batch_size=32,
-        max_length=50,
+        sequence_length=64, 
+        max_epochs=1,
         trainable_pos_emb=True
     )
 
     # Initialize the TensorBoard logger
-    logger = TensorBoardLogger("tb_logs", name="my_model")
+    logger = TensorBoardLogger("tb_logs", name="gpt", log_graph=True)
 
-    # Initialize the GradScaler for mixed precision
-    scaler = GradScaler()
-
-    # Modify Trainer to support AMP
     trainer = Trainer(
-        max_epochs=MAX_EPOCHS,
+        max_epochs=model.max_epochs,
         logger=logger,
         devices=1 if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
-        precision=32  # Add this line to enable 16-bit precision
+        precision=16  # Add this line to enable 16-bit precision mixed precision (AMP)
     )
 
     # Train the model with AMP
     trainer.fit(model)
+    logger.save()  # Save the TensorBoard logs
 
     # Optionally save the final model
-    # torch.save(model.state_dict(), 'final_model.pth')
+    torch.save(model.state_dict(), 'final_model.pth')
 
 def main(args):
     if args.command == 'encode':
@@ -220,9 +219,6 @@ from dataset import TokenizedTextDataset
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 
-global MAX_EPOCHS
-MAX_EPOCHS = 1
-
 # Collate function outside the dataset class
 def collate_fn(batch):
     inputs, targets, masks = zip(*batch)
@@ -234,7 +230,7 @@ def collate_fn(batch):
 
 
 class GPTModel(L.LightningModule):
-    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, max_length, trainable_pos_emb=False):
+    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, sequence_length, max_epochs, trainable_pos_emb=False):
         super(GPTModel, self).__init__()
         self.save_hyperparameters() # Save the model's hyperparameters
         self.embed_size = embed_size
@@ -242,9 +238,16 @@ class GPTModel(L.LightningModule):
         self.heads = heads
         self.forward_expansion = forward_expansion
         self.vocab_size = vocab_size
-        self.max_length = max_length
         self.batch_size = batch_size
+        self.sequence_length = sequence_length
+        self.max_epochs = max_epochs
         self.trainable_pos_emb = trainable_pos_emb
+
+        # Example input array (adjust the shape according to your model's input)
+        self.example_input_array = torch.zeros((1, sequence_length), dtype=torch.long)
+
+        with open('data/training_data.txt', 'r') as f:
+            self.dataset_length = sum(1 for _ in f)
 
         self.embedding = nn.Embedding(self.vocab_size, self.embed_size)
         self.pos_embedding = nn.Parameter(torch.zeros(1, 5000, embed_size))  # Add positional embeddings as a parameter
@@ -256,6 +259,7 @@ class GPTModel(L.LightningModule):
         self.output_layer = nn.Linear(embed_size, vocab_size)
 
     def create_mask(self, mask, current_seq_length):
+
         # Expand mask for the number of heads and sequence length
         mask = mask.unsqueeze(1).unsqueeze(2)  # Now [batch_size, 1, 1, seq_len]
         mask = mask.repeat(1, self.heads, current_seq_length, 1)  # Now [batch_size, num_heads, seq_len, seq_len]
@@ -266,7 +270,9 @@ class GPTModel(L.LightningModule):
         return mask
 
     def forward(self, x, mask=None):
+
         x = self.embedding(x)
+
         current_seq_length = x.size(1)
 
         # Add positional embeddings
@@ -283,6 +289,7 @@ class GPTModel(L.LightningModule):
             x = layer(x, mask=mask)  # Pass the mask to each layer
 
         x = self.output_layer(x)
+
         return x
 
     def pos_embedding_sinusoidal(self, sequence_length):
@@ -303,48 +310,40 @@ class GPTModel(L.LightningModule):
     def training_step(self, batch):
         inputs, targets, masks = batch 
 
-        with autocast():  # Enable automatic mixed precision
-            outputs = self(inputs, mask=masks)  # Pass the masks to the model
-            outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
-            targets = targets.view(-1)  # Flatten targets
-            loss = F.cross_entropy(outputs, targets)
+        outputs = self(inputs, mask=masks)  # Pass the masks to the model
+        outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
+        targets = targets.view(-1)  # Flatten targets
+        loss = F.cross_entropy(outputs, targets)
 
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
     def validation_step(self, batch):
-        
         inputs, targets, masks = batch  # Unpack the attention masks along with inputs and targets
-        with autocast():  # Enable automatic mixed precision
-            outputs = self(inputs, mask=masks)  # Pass the masks to the model during forward pass
-            outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
-            targets = targets.view(-1)  # Flatten targets
-            loss = F.cross_entropy(outputs, targets)
+        outputs = self(inputs, mask=masks)  # Pass the masks to the model during forward pass
+        outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
+        targets = targets.view(-1)  # Flatten targets
+        loss = F.cross_entropy(outputs, targets)
 
         self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
     def train_dataloader(self):
-        
-        train_dataset = TokenizedTextDataset('data/training_data.txt')
+        train_dataset = TokenizedTextDataset('data/training_data.txt', self.sequence_length)
         return DataLoader(train_dataset, batch_size=self.batch_size, collate_fn=collate_fn, shuffle=True, pin_memory=True)
 
     def val_dataloader(self):
-        val_dataset = TokenizedTextDataset('data/validation_data.txt')
+        val_dataset = TokenizedTextDataset('data/validation_data.txt', self.sequence_length)
         return DataLoader(val_dataset, batch_size=self.batch_size, collate_fn=collate_fn, pin_memory=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=0.0001, weight_decay=0.01)
 
-        # Assuming train_dataset is defined and accessible
-        train_dataset = TokenizedTextDataset('data/training_data.txt')
-        num_batches_per_epoch = len(train_dataset) // self.batch_size
-        if len(train_dataset) % self.batch_size != 0:
+        num_batches_per_epoch = self.dataset_length // self.batch_size
+        if self.dataset_length % self.batch_size != 0:
             num_batches_per_epoch += 1
 
-        # Use the max_epochs variable you have defined
-        num_epochs = MAX_EPOCHS
-        total_steps = num_epochs * num_batches_per_epoch
+        total_steps = self.max_epochs * num_batches_per_epoch
         warmup_steps = int(0.1 * total_steps)  # Example: 10% of total steps for warmup
 
         scheduler = WarmupCosineLR(optimizer, warmup_steps=warmup_steps, total_steps=total_steps)
@@ -392,7 +391,7 @@ def get_latest_checkpoint(version):
     return latest_checkpoint
 
 def read_hparams(version):
-    hparams_path = f'tb_logs/my_model/version_{version}/hparams.yaml'
+    hparams_path = f'tb_logs/gpt/version_{version}/hparams.yaml'
     with open(hparams_path) as file:
         hparams = yaml.safe_load(file)
     return hparams
@@ -402,7 +401,7 @@ def predict_model(input_text, model_version=None):
 
     # Use the latest version if no specific version is provided
     if model_version is None:
-        versions = [d for d in os.listdir('tb_logs/my_model') if d.startswith('version_')]
+        versions = [d for d in os.listdir('tb_logs/gpt') if d.startswith('version_')]
         if versions:
             versions.sort(key=lambda v: int(v.split('_')[1]), reverse=True)
             model_version = versions[0].split('_')[1]
@@ -421,7 +420,8 @@ def predict_model(input_text, model_version=None):
         forward_expansion=hparams['forward_expansion'],
         dropout_rate=hparams['dropout_rate'],
         batch_size=hparams['batch_size'],
-        vocab_size=hparams['vocab_size']
+        vocab_size=hparams['vocab_size'],
+        sequence_length=hparams['sequence_length'],
     )
 
     checkpoint_path = get_latest_checkpoint(model_version)
@@ -449,7 +449,7 @@ def top_p_filtering(logits, top_p=0.9, filter_value=-float('Inf')):
     logits[indices_to_remove] = filter_value
     return logits
 
-def generate_text(input_text, tokenizer, model, max_length=50, temperature=1.0, top_p=0.9):
+def generate_text(input_text, tokenizer, model, temperature=1.0, top_p=0.9):
     if not input_text.strip():
         raise ValueError("Input text is empty")
 
@@ -467,7 +467,7 @@ def generate_text(input_text, tokenizer, model, max_length=50, temperature=1.0, 
     # Generate text
     model.eval()
     with torch.no_grad():
-        for i in range(max_length):
+        for i in range(model.sequence_length):
             outputs = model(input_ids)
             logits = outputs[:, -1, :] / temperature
             filtered_logits = top_p_filtering(logits.squeeze(), top_p=top_p)

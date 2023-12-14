@@ -14,7 +14,7 @@ def get_latest_checkpoint(version):
     return latest_checkpoint
 
 def read_hparams(version):
-    hparams_path = f'tb_logs/my_model/version_{version}/hparams.yaml'
+    hparams_path = f'tb_logs/gpt/version_{version}/hparams.yaml'
     with open(hparams_path) as file:
         hparams = yaml.safe_load(file)
     return hparams
@@ -24,7 +24,7 @@ def predict_model(input_text, model_version=None):
 
     # Use the latest version if no specific version is provided
     if model_version is None:
-        versions = [d for d in os.listdir('tb_logs/my_model') if d.startswith('version_')]
+        versions = [d for d in os.listdir('tb_logs/gpt') if d.startswith('version_')]
         if versions:
             versions.sort(key=lambda v: int(v.split('_')[1]), reverse=True)
             model_version = versions[0].split('_')[1]
@@ -43,7 +43,8 @@ def predict_model(input_text, model_version=None):
         forward_expansion=hparams['forward_expansion'],
         dropout_rate=hparams['dropout_rate'],
         batch_size=hparams['batch_size'],
-        vocab_size=hparams['vocab_size']
+        vocab_size=hparams['vocab_size'],
+        sequence_length=hparams['sequence_length'],
     )
 
     checkpoint_path = get_latest_checkpoint(model_version)
@@ -71,7 +72,7 @@ def top_p_filtering(logits, top_p=0.9, filter_value=-float('Inf')):
     logits[indices_to_remove] = filter_value
     return logits
 
-def generate_text(input_text, tokenizer, model, max_length=50, temperature=1.0, top_p=0.9):
+def generate_text(input_text, tokenizer, model, temperature=1.0, top_p=0.9):
     if not input_text.strip():
         raise ValueError("Input text is empty")
 
@@ -89,7 +90,7 @@ def generate_text(input_text, tokenizer, model, max_length=50, temperature=1.0, 
     # Generate text
     model.eval()
     with torch.no_grad():
-        for i in range(max_length):
+        for i in range(model.sequence_length):
             outputs = model(input_ids)
             logits = outputs[:, -1, :] / temperature
             filtered_logits = top_p_filtering(logits.squeeze(), top_p=top_p)
