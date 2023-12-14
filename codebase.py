@@ -130,7 +130,6 @@ class GPTTransformerBlock(nn.Module):
         return out
 # main.py
 import argparse
-import os
 import torch
 
 from torch.cuda.amp import GradScaler
@@ -150,21 +149,24 @@ def train_model():
         forward_expansion=4, 
         dropout_rate=0.1,
         vocab_size=100232, # Adjust as needed
-        batch_size=32,
+        batch_size=128,
         sequence_length=64, 
-        max_epochs=1,
+        max_epochs=100,
         trainable_pos_emb=True
     )
 
     # Initialize the TensorBoard logger
     logger = TensorBoardLogger("tb_logs", name="gpt", log_graph=True)
+    torch.set_float32_matmul_precision('medium')  # Enable mixed precision training
 
     trainer = Trainer(
         max_epochs=model.max_epochs,
         logger=logger,
+        limit_train_batches=0.1,  # Reduce training data to speed up training
+        limit_val_batches=0.1,  # Reduce validation data to speed up validation
         devices=1 if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
-        precision=16  # Add this line to enable 16-bit precision mixed precision (AMP)
+        precision='16-mixed'  # Add this line to enable 16-bit precision mixed precision (AMP)
     )
 
     # Train the model with AMP
@@ -259,22 +261,18 @@ class GPTModel(L.LightningModule):
         self.output_layer = nn.Linear(embed_size, vocab_size)
 
     def create_mask(self, mask, current_seq_length):
-
         # Expand mask for the number of heads and sequence length
-        mask = mask.unsqueeze(1).unsqueeze(2)  # Now [batch_size, 1, 1, seq_len]
-        mask = mask.repeat(1, self.heads, current_seq_length, 1)  # Now [batch_size, num_heads, seq_len, seq_len]
-
-        # Reshape to [batch_size * num_heads, seq_len, seq_len]
-        mask = mask.view(self.batch_size * self.heads, current_seq_length, current_seq_length)
-
+        mask = mask.unsqueeze(1)  # Now [batch_size, 1, seq_len]
+        mask = mask.repeat(1, self.heads, 1)  # Now [batch_size, num_heads, seq_len]
+        mask = mask.view(self.batch_size * self.heads, 1, current_seq_length)  # Now [batch_size*num_heads, 1, seq_len]
+        mask = mask.repeat(1, current_seq_length, 1)  # Now [batch_size*num_heads, seq_len, seq_len]
+        
         return mask
 
     def forward(self, x, mask=None):
 
         x = self.embedding(x)
-
         current_seq_length = x.size(1)
-
         # Add positional embeddings
         x = x + self.pos_embedding[:, :current_seq_length]
 
