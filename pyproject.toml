@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "agi"
-version = "0.1.0"
+version = "0.2.0"
 description = "AGI: Toward General AI through Advanced Programming Language Understanding"
 authors = ["Matthew <matthew@zeti.dev>"]
 readme = "README.md"
