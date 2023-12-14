@@ -87,11 +87,32 @@ def find_vocab_size(file_path):
 
 #vocab_size = find_vocab_size('data/training_data.txt')
 #print("Vocabulary Size:", vocab_size)
-import torch
 import torch.nn as nn
-import torch
-import math
 
+class GPTTransformerBlock(nn.Module):
+    def __init__(self, embed_size, heads, forward_expansion, dropout_rate):
+        super(GPTTransformerBlock, self).__init__()
+        self.attention = nn.MultiheadAttention(embed_dim=embed_size, num_heads=heads)
+        self.dropout = nn.Dropout(dropout_rate)  # Dropout layer
+        self.norm1 = nn.LayerNorm(embed_size)
+        self.norm2 = nn.LayerNorm(embed_size)
+        self.feed_forward = nn.Sequential(
+            nn.Linear(embed_size, forward_expansion * embed_size),
+            nn.GELU(),
+            nn.Linear(forward_expansion * embed_size, embed_size)
+        )
+
+    def forward(self, x, mask=None):
+        attention_output, _ = self.attention(x, x, x, attn_mask=mask)
+        x = self.norm1(self.dropout(attention_output) + x)  # Apply dropout after attention
+        forward_output = self.feed_forward(x)
+        out = self.norm2(self.dropout(forward_output) + x)  # Apply dropout after feed-forward network
+
+        return out
+
+
+# Alternative Learnable Positional Embeddings
+'''
 class PositionalEncoding(nn.Module):
     def __init__(self, embed_size, max_len=5000, learnable=True):
         super(PositionalEncoding, self).__init__()
@@ -114,28 +135,7 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         x = x + self.pe[:x.size(0), :]
         return x
-
-class GPTTransformerBlock(nn.Module):
-    def __init__(self, embed_size, heads, forward_expansion, dropout_rate):
-        super(GPTTransformerBlock, self).__init__()
-        self.attention = nn.MultiheadAttention(embed_dim=embed_size, num_heads=heads)
-        self.dropout = nn.Dropout(dropout_rate)  # Dropout layer
-        self.norm1 = nn.LayerNorm(embed_size)
-        self.norm2 = nn.LayerNorm(embed_size)
-        self.feed_forward = nn.Sequential(
-            nn.Linear(embed_size, forward_expansion * embed_size),
-            nn.GELU(),
-            nn.Linear(forward_expansion * embed_size, embed_size)
-        )
-
-    def forward(self, x, mask=None):
-        attention_output, _ = self.attention(x, x, x, attn_mask=mask)
-        x = self.norm1(self.dropout(attention_output) + x)  # Apply dropout after attention
-        forward_output = self.feed_forward(x)
-        out = self.norm2(self.dropout(forward_output) + x)  # Apply dropout after feed-forward network
-
-        return out
-# main.py
+'''# main.py
 import argparse
 import torch
 
@@ -156,11 +156,13 @@ def train_model():
         forward_expansion=4, 
         dropout_rate=0.1,
         vocab_size=100232, # Adjust as needed
-        batch_size=128,
+        batch_size=32,
         sequence_length=64, 
         max_epochs=100,
         trainable_pos_emb=True
     )
+
+    print(model.hparams)  # Print the model's hyperparameters
 
     # Initialize the TensorBoard logger
     logger = TensorBoardLogger("tb_logs", name="gpt", log_graph=True)
@@ -218,12 +220,9 @@ import torch
 import lightning as L
 import torch.nn as nn
 import math
-import random
-import torch.optim.lr_scheduler as lr_scheduler
 
-from torch.cuda.amp import autocast
 from torch.nn import functional as F
-from layers import GPTTransformerBlock, PositionalEncoding
+from layers import GPTTransformerBlock
 from dataset import TokenizedTextDataset
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
@@ -441,8 +440,6 @@ def predict_model(input_text, model_version=None):
 
 def top_p_filtering(logits, top_p=0.9, filter_value=-float('Inf')):
     """ Filter a distribution of logits using nucleus (top-p) sampling """
-    print(logits.shape)
-
     assert logits.dim() == 1  # batch size 1 for single word generation
     sorted_logits, sorted_indices = torch.sort(logits, descending=True)
     cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)

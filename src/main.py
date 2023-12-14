@@ -13,7 +13,7 @@ from lightning.pytorch.loggers import TensorBoardLogger
 def train_model():
     # Initialize model
     model = GPTModel(
-        embed_size=512, 
+        embed_size=1024, 
         num_layers=24, 
         heads=16, 
         forward_expansion=4, 
@@ -21,7 +21,7 @@ def train_model():
         vocab_size=100232, # Adjust as needed
         batch_size=32,
         sequence_length=64, 
-        max_epochs=100,
+        max_epochs=10,
         trainable_pos_emb=True
     )
 
