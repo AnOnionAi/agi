@@ -59,8 +59,6 @@ def predict_model(input_text, model_version=None):
 
 def top_p_filtering(logits, top_p=0.9, filter_value=-float('Inf')):
     """ Filter a distribution of logits using nucleus (top-p) sampling """
-    print(logits.shape)
-
     assert logits.dim() == 1  # batch size 1 for single word generation
     sorted_logits, sorted_indices = torch.sort(logits, descending=True)
     cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)

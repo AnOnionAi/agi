@@ -2,12 +2,9 @@ import torch
 import lightning as L
 import torch.nn as nn
 import math
-import random
-import torch.optim.lr_scheduler as lr_scheduler
 
-from torch.cuda.amp import autocast
 from torch.nn import functional as F
-from layers import GPTTransformerBlock, PositionalEncoding
+from layers import GPTTransformerBlock
 from dataset import TokenizedTextDataset
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
