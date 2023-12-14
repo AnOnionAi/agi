@@ -159,6 +159,8 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# Mac OS
+.DS_Store
 
 # Deep Learning
 tb_logs/
@@ -168,3 +170,4 @@ tb_logs/
 *.log
 *.ckpt
 *.ckpt.*
+
