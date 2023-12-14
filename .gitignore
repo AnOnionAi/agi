@@ -162,3 +162,4 @@ cython_debug/
 
 # Deep Learning
 tb_logs/
+*.pth
