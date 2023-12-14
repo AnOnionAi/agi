@@ -19,20 +19,21 @@ def train_model():
         forward_expansion=4, 
         dropout_rate=0.1,
         vocab_size=100232, # Adjust as needed
-        batch_size=32,
+        batch_size=128,
         sequence_length=64, 
-        max_epochs=10,
+        max_epochs=100,
         trainable_pos_emb=True
     )
 
     # Initialize the TensorBoard logger
     logger = TensorBoardLogger("tb_logs", name="gpt", log_graph=True)
+    torch.set_float32_matmul_precision('medium')  # Enable mixed precision training
 
     trainer = Trainer(
         max_epochs=model.max_epochs,
         logger=logger,
-        #limit_train_batches=0.1,  # Reduce training data to speed up training
-        #limit_val_batches=0.1,  # Reduce validation data to speed up validation
+        limit_train_batches=0.01,  # Reduce training data to speed up training
+        limit_val_batches=0.01,  # Reduce validation data to speed up validation
         devices=1 if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
         precision='16-mixed'  # Add this line to enable 16-bit precision mixed precision (AMP)
