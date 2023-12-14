@@ -22,7 +22,9 @@ def train_model():
         batch_size=32,
         sequence_length=64, 
         max_epochs=10,
-        trainable_pos_emb=True
+        training_file_path='data/training_data.txt',
+        validation_file_path='data/validation_data.txt',
+        trainable_pos_emb=False
     )
 
     print(model.hparams)  # Print the model's hyperparameters

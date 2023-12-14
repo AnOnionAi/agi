@@ -20,7 +20,7 @@ def collate_fn(batch):
 
 
 class GPTModel(L.LightningModule):
-    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, sequence_length, max_epochs, trainable_pos_emb=False):
+    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, sequence_length, max_epochs, training_file_path, validation_file_path, trainable_pos_emb=False,):
         super(GPTModel, self).__init__()
         self.save_hyperparameters() # Save the model's hyperparameters
         self.embed_size = embed_size
@@ -32,11 +32,13 @@ class GPTModel(L.LightningModule):
         self.sequence_length = sequence_length
         self.max_epochs = max_epochs
         self.trainable_pos_emb = trainable_pos_emb
+        self.training_file_path = training_file_path
+        self.validation_file_path = validation_file_path
 
         # Example input array (adjust the shape according to your model's input)
         self.example_input_array = torch.zeros((1, sequence_length), dtype=torch.long)
 
-        with open('data/training_data.txt', 'r') as f:
+        with open(training_file_path, 'r') as f:
             self.dataset_length = sum(1 for _ in f)
 
         self.embedding = nn.Embedding(self.vocab_size, self.embed_size)
@@ -115,11 +117,11 @@ class GPTModel(L.LightningModule):
         return loss
 
     def train_dataloader(self):
-        train_dataset = TokenizedTextDataset('data/training_data.txt', self.sequence_length)
+        train_dataset = TokenizedTextDataset(self.training_file_path, self.sequence_length)
         return DataLoader(train_dataset, batch_size=self.batch_size, collate_fn=collate_fn, shuffle=True, pin_memory=True)
 
     def val_dataloader(self):
-        val_dataset = TokenizedTextDataset('data/validation_data.txt', self.sequence_length)
+        val_dataset = TokenizedTextDataset(self.validation_file_path, self.sequence_length)
         return DataLoader(val_dataset, batch_size=self.batch_size, collate_fn=collate_fn, pin_memory=True)
 
     def configure_optimizers(self):
