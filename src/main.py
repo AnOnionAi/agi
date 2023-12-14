@@ -25,6 +25,8 @@ def train_model():
         trainable_pos_emb=True
     )
 
+    print(model.hparams)  # Print the model's hyperparameters
+
     # Initialize the TensorBoard logger
     logger = TensorBoardLogger("tb_logs", name="gpt", log_graph=True)
     torch.set_float32_matmul_precision('medium')  # Enable mixed precision training
