@@ -19,7 +19,7 @@ def train_model():
         forward_expansion=4, 
         dropout_rate=0.1,
         vocab_size=100232, # Adjust as needed
-        batch_size=64,
+        batch_size=32,
         sequence_length=64, 
         max_epochs=100,
         trainable_pos_emb=True
