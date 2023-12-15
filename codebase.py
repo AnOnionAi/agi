@@ -40,7 +40,7 @@ import tiktoken
 
 def encode_file(file_path, output_file):
     # Initialize the tokenizer for GPT-4 model
-    encoder = tiktoken.encoding_for_model("gpt-4")
+    encoder = tiktoken.encoding_for_model("gpt2")
 
     # Read the training data, assuming each line in the file is a separate sentence
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -85,8 +85,8 @@ def find_vocab_size(file_path):
     return max_token + 1  # Assuming tokens start from 0
 
 
-#vocab_size = find_vocab_size('data/training_data.txt')
-#print("Vocabulary Size:", vocab_size)
+vocab_size = find_vocab_size('data/training_data.txt')
+print("Vocabulary Size:", vocab_size)
 import torch.nn as nn
 
 class GPTTransformerBlock(nn.Module):
@@ -314,25 +314,32 @@ class GPTModel(L.LightningModule):
         # Add batch dimension with .unsqueeze
         pos_emb = pos_emb.unsqueeze(0)
         return pos_emb
+    
+    def masked_loss(self, outputs, targets, masks):
+        # Flatten outputs and targets
+        outputs_flat = outputs.view(-1, self.vocab_size)
+        targets_flat = targets.view(-1)
+
+        # Use masks to filter out loss from padding tokens
+        mask = masks.view(-1) == 1  # Flatten and convert to boolean mask
+        outputs_masked = outputs_flat[mask]
+        targets_masked = targets_flat[mask]
+
+        # Calculate cross-entropy loss only on non-padded tokens
+        return F.cross_entropy(outputs_masked, targets_masked)
 
     def training_step(self, batch):
-        inputs, targets, masks = batch 
-
-        outputs = self(inputs, mask=masks)  # Pass the masks to the model
-        outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
-        targets = targets.view(-1)  # Flatten targets
-        loss = F.cross_entropy(outputs, targets)
+        inputs, targets, masks = batch
+        outputs = self(inputs, mask=masks)
+        loss = self.masked_loss(outputs, targets, masks)
 
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
     def validation_step(self, batch):
-        inputs, targets, masks = batch  # Unpack the attention masks along with inputs and targets
-        
-        outputs = self(inputs, mask=masks)  # Pass the masks to the model during forward pass
-        outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
-        targets = targets.view(-1)  # Flatten targets
-        loss = F.cross_entropy(outputs, targets)
+        inputs, targets, masks = batch
+        outputs = self(inputs, mask=masks)
+        loss = self.masked_loss(outputs, targets, masks)
 
         self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
         return loss

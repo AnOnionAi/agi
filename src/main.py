@@ -18,7 +18,7 @@ def train_model():
         heads=16, 
         forward_expansion=4, 
         dropout_rate=0.1,
-        vocab_size=100232, # Adjust as needed
+        vocab_size=50233, # Adjust as needed
         batch_size=32,
         sequence_length=64, 
         max_epochs=1,

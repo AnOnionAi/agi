@@ -2,7 +2,7 @@ import tiktoken
 
 def encode_file(file_path, output_file):
     # Initialize the tokenizer for GPT-4 model
-    encoder = tiktoken.encoding_for_model("gpt-4")
+    encoder = tiktoken.encoding_for_model("gpt2")
 
     # Read the training data, assuming each line in the file is a separate sentence
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -47,5 +47,5 @@ def find_vocab_size(file_path):
     return max_token + 1  # Assuming tokens start from 0
 
 
-#vocab_size = find_vocab_size('data/training_data.txt')
-#print("Vocabulary Size:", vocab_size)
+vocab_size = find_vocab_size('data/training_data.txt')
+print("Vocabulary Size:", vocab_size)
