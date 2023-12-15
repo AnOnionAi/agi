@@ -20,7 +20,7 @@ def read_hparams(version):
     return hparams
 
 def predict_model(input_text, model_version=None):
-    tokenizer = tiktoken.encoding_for_model("gpt-4")  # Ensure this matches your model's vocabulary
+    tokenizer = tiktoken.encoding_for_model("gpt2")  # Ensure this matches your model's vocabulary
 
     # Use the latest version if no specific version is provided
     if model_version is None:

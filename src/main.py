@@ -27,6 +27,7 @@ def train_model():
         trainable_pos_emb=False
     )
 
+    print("Model Hyperparameters")
     print(model.hparams)  # Print the model's hyperparameters
 
     # Initialize the TensorBoard logger
