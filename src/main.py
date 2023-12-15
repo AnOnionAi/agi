@@ -58,7 +58,7 @@ def main(args):
         train_model()
         print("Training Complete")
     elif args.command == 'predict':
-        input_text = "What is Svelte?"
+        input_text = "HTMLElement, SVGElement (3.42.2) and BigInt (3.42.3) are now known"
         predict_model(input_text)
     else:
         print("Invalid command")

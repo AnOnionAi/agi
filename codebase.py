@@ -158,8 +158,10 @@ def train_model():
         vocab_size=100232, # Adjust as needed
         batch_size=32,
         sequence_length=64, 
-        max_epochs=10,
-        trainable_pos_emb=True
+        max_epochs=1,
+        training_file_path='data/training_data.txt',
+        validation_file_path='data/validation_data.txt',
+        trainable_pos_emb=False
     )
 
     print(model.hparams)  # Print the model's hyperparameters
@@ -193,7 +195,7 @@ def main(args):
         train_model()
         print("Training Complete")
     elif args.command == 'predict':
-        input_text = "Why Svelte Good?"
+        input_text = "HTMLElement, SVGElement (3.42.2) and BigInt (3.42.3) are now known"
         predict_model(input_text)
     else:
         print("Invalid command")
@@ -238,7 +240,7 @@ def collate_fn(batch):
 
 
 class GPTModel(L.LightningModule):
-    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, sequence_length, max_epochs, trainable_pos_emb=False):
+    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, sequence_length, max_epochs, training_file_path, validation_file_path, trainable_pos_emb=False,):
         super(GPTModel, self).__init__()
         self.save_hyperparameters() # Save the model's hyperparameters
         self.embed_size = embed_size
@@ -250,11 +252,13 @@ class GPTModel(L.LightningModule):
         self.sequence_length = sequence_length
         self.max_epochs = max_epochs
         self.trainable_pos_emb = trainable_pos_emb
+        self.training_file_path = training_file_path
+        self.validation_file_path = validation_file_path
 
         # Example input array (adjust the shape according to your model's input)
         self.example_input_array = torch.zeros((1, sequence_length), dtype=torch.long)
 
-        with open('data/training_data.txt', 'r') as f:
+        with open(training_file_path, 'r') as f:
             self.dataset_length = sum(1 for _ in f)
 
         self.embedding = nn.Embedding(self.vocab_size, self.embed_size)
@@ -324,6 +328,7 @@ class GPTModel(L.LightningModule):
 
     def validation_step(self, batch):
         inputs, targets, masks = batch  # Unpack the attention masks along with inputs and targets
+        
         outputs = self(inputs, mask=masks)  # Pass the masks to the model during forward pass
         outputs = outputs.view(-1, self.vocab_size)  # Flatten outputs
         targets = targets.view(-1)  # Flatten targets
@@ -333,11 +338,11 @@ class GPTModel(L.LightningModule):
         return loss
 
     def train_dataloader(self):
-        train_dataset = TokenizedTextDataset('data/training_data.txt', self.sequence_length)
+        train_dataset = TokenizedTextDataset(self.training_file_path, self.sequence_length)
         return DataLoader(train_dataset, batch_size=self.batch_size, collate_fn=collate_fn, shuffle=True, pin_memory=True)
 
     def val_dataloader(self):
-        val_dataset = TokenizedTextDataset('data/validation_data.txt', self.sequence_length)
+        val_dataset = TokenizedTextDataset(self.validation_file_path, self.sequence_length)
         return DataLoader(val_dataset, batch_size=self.batch_size, collate_fn=collate_fn, pin_memory=True)
 
     def configure_optimizers(self):
@@ -426,7 +431,9 @@ def predict_model(input_text, model_version=None):
         batch_size=hparams['batch_size'],
         vocab_size=hparams['vocab_size'],
         sequence_length=hparams['sequence_length'],
-        max_epochs=hparams['max_epochs']
+        max_epochs=hparams['max_epochs'],
+        training_file_path=hparams['training_file_path'],
+        validation_file_path=hparams['validation_file_path']
     )
 
     checkpoint_path = get_latest_checkpoint(model_version)
