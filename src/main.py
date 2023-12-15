@@ -21,7 +21,7 @@ def train_model():
         vocab_size=100232, # Adjust as needed
         batch_size=32,
         sequence_length=64, 
-        max_epochs=10,
+        max_epochs=1,
         training_file_path='data/training_data.txt',
         validation_file_path='data/validation_data.txt',
         trainable_pos_emb=False
@@ -58,7 +58,7 @@ def main(args):
         train_model()
         print("Training Complete")
     elif args.command == 'predict':
-        input_text = "Why Svelte Good?"
+        input_text = "What is Svelte?"
         predict_model(input_text)
     else:
         print("Invalid command")

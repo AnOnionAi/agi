@@ -45,7 +45,9 @@ def predict_model(input_text, model_version=None):
         batch_size=hparams['batch_size'],
         vocab_size=hparams['vocab_size'],
         sequence_length=hparams['sequence_length'],
-        max_epochs=hparams['max_epochs']
+        max_epochs=hparams['max_epochs'],
+        training_file_path=hparams['training_file_path'],
+        validation_file_path=hparams['validation_file_path']
     )
 
     checkpoint_path = get_latest_checkpoint(model_version)
