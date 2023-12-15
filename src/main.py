@@ -21,7 +21,7 @@ def train_model():
         vocab_size=50233, # Adjust as needed
         batch_size=32,
         sequence_length=64, 
-        max_epochs=1,
+        max_epochs=100,
         training_file_path='data/training_data.txt',
         validation_file_path='data/validation_data.txt',
         trainable_pos_emb=False
