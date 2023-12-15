@@ -36,27 +36,38 @@ class TokenizedTextDataset(Dataset):
         attention_mask = torch.tensor(attention_mask[:-1], dtype=torch.float)
 
         return input_sequence, target_sequence, attention_mask
+import os
 import tiktoken
 
-def encode_file(file_path, output_file):
-    # Initialize the tokenizer for GPT-4 model
+def encode_file(file_path, val_ratio=0.1):
+    # Initialize the tokenizer for the GPT-2 model
     encoder = tiktoken.encoding_for_model("gpt2")
 
-    # Read the training data, assuming each line in the file is a separate sentence
+    # Define file paths for encoded data, training data, and validation data
+    directory = os.path.dirname(file_path)
+    encoded_file = os.path.join(directory, 'encoded_data.txt')
+    train_file = os.path.join(directory, 'training_data.txt')
+    val_file = os.path.join(directory, 'validation_data.txt')
+
+    # Read and encode the data
     with open(file_path, 'r', encoding='utf-8') as file:
         sentences = file.readlines()
 
-    # Encode each sentence into tokens and write to the output file
-    with open(output_file, 'w', encoding='utf-8') as file:
+    with open(encoded_file, 'w', encoding='utf-8') as file:
         for sentence in sentences:
-            tokens = encoder.encode(sentence.strip())  # Strip whitespace and encode
-            token_str = ' '.join(map(str, tokens))  # Join tokens into a string
-            file.write(token_str + '\n')  # Write the token string to file
+            tokens = encoder.encode(sentence.strip())
+            token_str = ' '.join(map(str, tokens))
+            file.write(token_str + '\n')
 
-def split_data(file_path, train_file, val_file, val_ratio=0.1):
-    # Read the tokens from the file
+    # Split the encoded data into training and validation datasets
+    format_and_split_data(encoded_file, train_file, val_file, val_ratio)
+
+
+def format_and_split_data(file_path, train_file, val_file, val_ratio=0.1):
+    # Read the tokens from the file and join lines if they are not already joined
     with open(file_path, 'r', encoding='utf-8') as file:
-        tokens = [line.strip() for line in file]
+        lines = file.readlines()
+        tokens = [' '.join(line.strip().split()) for line in lines]  # Join tokens on the same line
 
     # Calculate the number of validation samples
     val_size = int(len(tokens) * val_ratio)
@@ -67,14 +78,11 @@ def split_data(file_path, train_file, val_file, val_ratio=0.1):
 
     # Write the training tokens to the training file
     with open(train_file, 'w', encoding='utf-8') as file:
-        for token in train_tokens:
-            file.write(f'{token}\n')
+        file.write('\n'.join(train_tokens) + '\n')
 
     # Write the validation tokens to the validation file
     with open(val_file, 'w', encoding='utf-8') as file:
-        for token in val_tokens:
-            file.write(f'{token}\n')
-
+        file.write('\n'.join(val_tokens) + '\n')
 
 def find_vocab_size(file_path):
     max_token = 0
@@ -84,6 +92,8 @@ def find_vocab_size(file_path):
             max_token = max(max_token, max(tokens))
     return max_token + 1  # Assuming tokens start from 0
 
+# Example usage:
+# encode_file('data/raw_data.txt', 'data/encoded_data.txt', 'data/training_data.txt', 'data/validation_data.txt')
 
 vocab_size = find_vocab_size('data/training_data.txt')
 print("Vocabulary Size:", vocab_size)
@@ -155,15 +165,16 @@ def train_model():
         heads=16, 
         forward_expansion=4, 
         dropout_rate=0.1,
-        vocab_size=100232, # Adjust as needed
+        vocab_size=50233, # Adjust as needed
         batch_size=32,
         sequence_length=64, 
-        max_epochs=1,
+        max_epochs=10,
         training_file_path='data/training_data.txt',
         validation_file_path='data/validation_data.txt',
         trainable_pos_emb=False
     )
 
+    print("Model Hyperparameters")
     print(model.hparams)  # Print the model's hyperparameters
 
     # Initialize the TensorBoard logger
@@ -189,13 +200,14 @@ def train_model():
 
 def main(args):
     if args.command == 'encode':
-        encode_file(args.input_file, args.output_file)
-        print(f"Encoded Tokens written to {args.output_file}")
+        input_file = args.input_file if args.input_file else 'data/raw_data.txt'
+        encode_file(input_file)
+        print(f"Encoded Tokens written")
     elif args.command == 'train':
         train_model()
         print("Training Complete")
     elif args.command == 'predict':
-        input_text = "HTMLElement, SVGElement (3.42.2) and BigInt (3.42.3) are now known"
+        input_text = "What is Svelte?"
         predict_model(input_text)
     else:
         print("Invalid command")
@@ -206,8 +218,7 @@ if __name__ == "__main__":
 
     # Subparser for encoding
     parser_encode = subparsers.add_parser('encode', help='Encode text data to tokens')
-    parser_encode.add_argument('input_file', type=str, help='Input file path')
-    parser_encode.add_argument('output_file', type=str, help='Output file path')
+    parser_encode.add_argument('input_file', type=str, nargs='?', default=None, help='Input file path')
 
     # Subparser for training
     parser_train = subparsers.add_parser('train', help='Train the GPT model')
@@ -217,8 +228,7 @@ if __name__ == "__main__":
 
     # Parse the arguments and call the main function
     args = parser.parse_args()
-    main(args)
-import torch
+    main(args)import torch
 import lightning as L
 import torch.nn as nn
 import math
@@ -413,7 +423,7 @@ def read_hparams(version):
     return hparams
 
 def predict_model(input_text, model_version=None):
-    tokenizer = tiktoken.encoding_for_model("gpt-4")  # Ensure this matches your model's vocabulary
+    tokenizer = tiktoken.encoding_for_model("gpt2")  # Ensure this matches your model's vocabulary
 
     # Use the latest version if no specific version is provided
     if model_version is None:

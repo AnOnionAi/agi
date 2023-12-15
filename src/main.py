@@ -21,7 +21,7 @@ def train_model():
         vocab_size=50233, # Adjust as needed
         batch_size=32,
         sequence_length=64, 
-        max_epochs=100,
+        max_epochs=10,
         training_file_path='data/training_data.txt',
         validation_file_path='data/validation_data.txt',
         trainable_pos_emb=False
@@ -53,13 +53,14 @@ def train_model():
 
 def main(args):
     if args.command == 'encode':
-        encode_file(args.input_file, args.output_file)
-        print(f"Encoded Tokens written to {args.output_file}")
+        input_file = args.input_file if args.input_file else 'data/raw_data.txt'
+        encode_file(input_file)
+        print(f"Encoded Tokens written")
     elif args.command == 'train':
         train_model()
         print("Training Complete")
     elif args.command == 'predict':
-        input_text = "HTMLElement, SVGElement (3.42.2) and BigInt (3.42.3) are now known"
+        input_text = "What is Svelte?"
         predict_model(input_text)
     else:
         print("Invalid command")
@@ -70,8 +71,7 @@ if __name__ == "__main__":
 
     # Subparser for encoding
     parser_encode = subparsers.add_parser('encode', help='Encode text data to tokens')
-    parser_encode.add_argument('input_file', type=str, help='Input file path')
-    parser_encode.add_argument('output_file', type=str, help='Output file path')
+    parser_encode.add_argument('input_file', type=str, nargs='?', default=None, help='Input file path')
 
     # Subparser for training
     parser_train = subparsers.add_parser('train', help='Train the GPT model')
