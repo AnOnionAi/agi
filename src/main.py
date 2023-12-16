@@ -21,7 +21,7 @@ def train_model():
         vocab_size=50233, # Adjust as needed
         batch_size=32,
         sequence_length=64, 
-        max_epochs=10,
+        max_epochs=1,
         training_file_path='data/training_data.txt',
         validation_file_path='data/validation_data.txt',
         trainable_pos_emb=False
@@ -37,8 +37,6 @@ def train_model():
     trainer = Trainer(
         max_epochs=model.max_epochs,
         logger=logger,
-        limit_train_batches=0.1,  # Reduce training data to speed up training
-        limit_val_batches=0.1,  # Reduce validation data to speed up validation
         devices=1 if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
         precision='16-mixed'  # Add this line to enable 16-bit precision mixed precision (AMP)

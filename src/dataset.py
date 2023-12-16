@@ -2,25 +2,43 @@ from torch.utils.data import Dataset
 import torch
 
 class TokenizedTextDataset(Dataset):
-    def __init__(self, file_path, sequence_length, padding_token=0):
+    def __init__(self, file_path, sequence_length, padding_token=0, in_memory=True):
         self.file_path = file_path
         self.sequence_length = sequence_length
         self.padding_token = padding_token
-        self.num_lines = self._get_num_lines()
+        self.in_memory = in_memory
+        self.data = []
+        self.line_offsets = []
 
-    def _get_num_lines(self):
+        if self.in_memory:
+            self._load_dataset_into_memory()
+        else:
+            self._index_file_positions()
+
+    def _load_dataset_into_memory(self):
         with open(self.file_path, 'r') as file:
-            return sum(1 for line in file)
+            for line in file:
+                self.data.append(line.strip())
+
+    def _index_file_positions(self):
+        with open(self.file_path, 'r') as file:
+            offset = 0
+            for line in file:
+                self.line_offsets.append(offset)
+                offset += len(line)
 
     def __len__(self):
-        return self.num_lines
+        return len(self.data) if self.in_memory else len(self.line_offsets)
 
     def __getitem__(self, idx):
-        with open(self.file_path, 'r') as file:
-            for i, line in enumerate(file):
-                if i == idx:
-                    sequence = list(map(int, line.strip().split()))
-                    break
+        if self.in_memory:
+            line = self.data[idx]
+        else:
+            with open(self.file_path, 'r') as file:
+                file.seek(self.line_offsets[idx])
+                line = file.readline().strip()
+
+        sequence = list(map(int, line.split()))
 
         # Padding or truncating the sequence
         if len(sequence) < self.sequence_length:
