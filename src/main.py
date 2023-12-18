@@ -37,8 +37,8 @@ def train_model():
     trainer = Trainer(
         max_epochs=model.max_epochs,
         logger=logger,
-        devices = torch.cuda.device_count() if torch.cuda.is_available() else 1
-        accelerator="gpu" if torch.cuda.is_available() else 'auto'
+        devices = torch.cuda.device_count() if torch.cuda.is_available() else 1,
+        accelerator="gpu" if torch.cuda.is_available() else 'auto',
         precision='16-mixed'  # Add this line to enable 16-bit precision mixed precision (AMP)
         #limit_train_batches=0.1,  # Limit the training data to 10% of the training set
         #limit_val_batches=0.1,  # Limit the validation data to 10% of the validation set
