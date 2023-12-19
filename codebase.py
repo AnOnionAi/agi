@@ -179,14 +179,14 @@ def train_model():
     # Initialize model
     model = GPTModel(
         embed_size=1024, 
-        num_layers=24, 
+        num_layers=12, 
         heads=16, 
         forward_expansion=4, 
         dropout_rate=0.1,
         vocab_size=50233, # Adjust as needed
         batch_size=32,
-        sequence_length=64, 
-        max_epochs=100,
+        sequence_length=128, 
+        max_epochs=1,
         training_file_path='data/training_data.txt',
         validation_file_path='data/validation_data.txt',
         trainable_pos_emb=False
@@ -202,11 +202,11 @@ def train_model():
     trainer = Trainer(
         max_epochs=model.max_epochs,
         logger=logger,
-        limit_train_batches=0.1,  # Reduce training data to speed up training
-        limit_val_batches=0.1,  # Reduce validation data to speed up validation
-        devices=1 if torch.cuda.is_available() else 1,
+        devices = torch.cuda.device_count() if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
         precision='16-mixed'  # Add this line to enable 16-bit precision mixed precision (AMP)
+        #limit_train_batches=0.1,  # Limit the training data to 10% of the training set
+        #limit_val_batches=0.1,  # Limit the validation data to 10% of the validation set
     )
 
     # Train the model with AMP
@@ -290,7 +290,8 @@ class GPTModel(L.LightningModule):
             self.dataset_length = sum(1 for _ in f)
 
         self.embedding = nn.Embedding(self.vocab_size, self.embed_size)
-        self.pos_embedding = nn.Parameter(torch.zeros(1, 5000, embed_size))  # Add positional embeddings as a parameter
+        # self.pos_embedding = nn.Parameter(torch.zeros(1, 5000, embed_size))  # Comment out or remove
+        self.pos_embedding = self.create_pos_embedding(sequence_length, embed_size)  # Call create_pos_embedding here
 
         self.layers = nn.ModuleList([
             GPTTransformerBlock(embed_size, heads, forward_expansion, dropout_rate)
@@ -298,21 +299,34 @@ class GPTModel(L.LightningModule):
         ])
         self.output_layer = nn.Linear(embed_size, vocab_size)
 
+    @staticmethod
+    def create_pos_embedding(max_len, d_model):
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0).transpose(0, 1)
+        return nn.Parameter(pe, requires_grad=False)
+
     def create_mask(self, mask, current_seq_length):
+        batch_size = mask.size(0)  # Get the actual batch size
         # Expand mask for the number of heads and sequence length
         mask = mask.unsqueeze(1)  # Now [batch_size, 1, seq_len]
         mask = mask.repeat(1, self.heads, 1)  # Now [batch_size, num_heads, seq_len]
-        mask = mask.view(self.batch_size * self.heads, 1, current_seq_length)  # Now [batch_size*num_heads, 1, seq_len]
+        mask = mask.view(batch_size * self.heads, 1, current_seq_length)  # Now [batch_size*num_heads, 1, seq_len]
         mask = mask.repeat(1, current_seq_length, 1)  # Now [batch_size*num_heads, seq_len, seq_len]
-        
+    
         return mask
 
     def forward(self, x, mask=None):
 
         x = self.embedding(x)
         current_seq_length = x.size(1)
-        # Add positional embeddings
-        x = x + self.pos_embedding[:, :current_seq_length]
+        # Ensure positional embeddings have the correct shape
+        pos_emb = self.pos_embedding[:, :current_seq_length, :]
+        pos_emb = pos_emb.expand(x.size(0), -1, -1)  # Expand along batch size
+        x = x + pos_emb
 
         # Transpose x to have shape (sequence_length, batch_size, embed_size)
         x = x.transpose(0, 1)
@@ -327,22 +341,7 @@ class GPTModel(L.LightningModule):
         x = self.output_layer(x)
 
         return x
-
-    def pos_embedding_sinusoidal(self, sequence_length):
-        # sequence_length is already the maximum sequence length in the batch
-        max_seq_length = sequence_length
-
-        # positions is a tensor containing positions [max_seq_length].
-        positions = torch.arange(max_seq_length, dtype=torch.float, device=self.device).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, self.embed_size, 2).float() * (-math.log(10000.0) / self.embed_size))
-        div_term = div_term.to(self.device)
-        pos_emb = torch.zeros((max_seq_length, self.embed_size), device=self.device)
-        pos_emb[:, 0::2] = torch.sin(positions * div_term)
         
-        # Add batch dimension with .unsqueeze
-        pos_emb = pos_emb.unsqueeze(0)
-        return pos_emb
-    
     def masked_loss(self, outputs, targets, masks):
         # Flatten outputs and targets
         outputs_flat = outputs.view(-1, self.vocab_size)
@@ -402,7 +401,7 @@ class GPTModel(L.LightningModule):
 
 
 class WarmupCosineLR(torch.optim.lr_scheduler._LRScheduler):
-    def __init__(self, optimizer, warmup_steps, total_steps, min_lr=0.0, last_epoch=-1):
+    def __init__(self, optimizer, warmup_steps, total_steps, min_lr=0.000001, last_epoch=-1):
         self.warmup_steps = warmup_steps
         self.total_steps = total_steps
         self.min_lr = min_lr
@@ -419,6 +418,8 @@ class WarmupCosineLR(torch.optim.lr_scheduler._LRScheduler):
 
     def _get_device(self):
         return self.optimizer.param_groups[0]['params'][0].device
+
+
 import torch
 import torch.nn.functional as F
 from torch.distributions import Categorical

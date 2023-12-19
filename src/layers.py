@@ -1,3 +1,5 @@
+import torch
+import math
 import torch.nn as nn
 
 class GPTTransformerBlock(nn.Module):
@@ -22,12 +24,10 @@ class GPTTransformerBlock(nn.Module):
         return out
 
 
-# Alternative Learnable Positional Embeddings
-'''
+# Learnable Positional Embeddings
 class PositionalEncoding(nn.Module):
-    def __init__(self, embed_size, max_len=5000, learnable=True):
+    def __init__(self, embed_size, max_len=5000):
         super(PositionalEncoding, self).__init__()
-        self.learnable = learnable
 
         # Initial sinusoidal positional encoding
         pe = torch.zeros(max_len, embed_size)
@@ -36,14 +36,9 @@ class PositionalEncoding(nn.Module):
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0).transpose(0, 1)
-
-        # Register as a buffer or a learnable parameter
-        if self.learnable:
-            self.pe = nn.Parameter(pe)  # Learnable positional embeddings
-        else:
-            self.register_buffer('pe', pe)  # Fixed sinusoidal embeddings
+       
+        self.pe = nn.Parameter(pe)  # Learnable positional embeddings
 
     def forward(self, x):
         x = x + self.pe[:x.size(0), :]
         return x
-'''
