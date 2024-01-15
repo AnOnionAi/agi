@@ -1,5 +1,16 @@
-from torch.utils.data import Dataset
 import torch
+import lightning as L
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import DataLoader, Dataset
+
+# Collate function outside the dataset class
+def collate_fn(batch):
+    inputs, targets, masks = zip(*batch)
+    inputs_padded = pad_sequence(inputs, batch_first=True, padding_value=0)
+    targets_padded = pad_sequence(targets, batch_first=True, padding_value=0)
+    masks_padded = pad_sequence(masks, batch_first=True, padding_value=0)  # Pad attention masks
+
+    return inputs_padded, targets_padded, masks_padded
 
 class TokenizedTextDataset(Dataset):
     def __init__(self, file_path, sequence_length, padding_token=0, in_memory=True):
@@ -54,21 +65,62 @@ class TokenizedTextDataset(Dataset):
         attention_mask = torch.tensor(attention_mask[:-1], dtype=torch.float)
 
         return input_sequence, target_sequence, attention_mask
+
+
+
+class GPTDataModule(L.LightningDataModule):
+    def __init__(self, train_file, val_file, batch_size=32, seq_length=128):
+        super().__init__()
+        self.train_file = train_file
+        self.val_file = val_file
+        self.batch_size = batch_size
+        self.seq_length = seq_length
+
+    def setup(self, stage=None):
+        # Create instances of the TokenizedTextDataset for training and validation
+        if stage == 'fit' or stage is None:
+            self.train_dataset = TokenizedTextDataset(self.train_file, self.seq_length)
+            self.val_dataset = TokenizedTextDataset(self.val_file, self.seq_length)
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=collate_fn, pin_memory=True)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True)
 import os
+import json
 import tiktoken
 
-def encode_file(file_path, val_ratio=0.1):
-    # Initialize the tokenizer for the GPT-2 model
-    encoder = tiktoken.encoding_for_model("gpt2")
+def restructure_data(input_file, output_file, context_window):
+    with open(input_file, 'r', encoding='utf-8') as file:
+        lines = file.readlines()
 
-    # Define file paths for encoded data, training data, and validation data
-    directory = os.path.dirname(file_path)
+    all_text = ""
+    for line in lines:
+        try:
+            data = json.loads(line)
+            text = data.get("text", "")
+            all_text += text + " "  # Add a space as a separator
+        except json.JSONDecodeError:
+            continue
+
+    chunks = [all_text[i:i+context_window] for i in range(0, len(all_text), context_window)]
+
+    with open(output_file, 'w', encoding='utf-8') as file:
+        for chunk in chunks:
+            file.write(chunk.strip() + '\n\n')
+
+def encode_file(file_path, val_ratio=0.1, context_window=1024):
+    structured_file = os.path.join(os.path.dirname(file_path), 'structured_data.txt')
+    restructure_data(file_path, structured_file, context_window)
+
+    encoder = tiktoken.encoding_for_model("gpt2")
+    directory = os.path.dirname(structured_file)
     encoded_file = os.path.join(directory, 'encoded_data.txt')
     train_file = os.path.join(directory, 'training_data.txt')
     val_file = os.path.join(directory, 'validation_data.txt')
 
-    # Read and encode the data
-    with open(file_path, 'r', encoding='utf-8') as file:
+    with open(structured_file, 'r', encoding='utf-8') as file:
         sentences = file.readlines()
 
     with open(encoded_file, 'w', encoding='utf-8') as file:
@@ -77,28 +129,18 @@ def encode_file(file_path, val_ratio=0.1):
             token_str = ' '.join(map(str, tokens))
             file.write(token_str + '\n')
 
-    # Split the encoded data into training and validation datasets
     format_and_split_data(encoded_file, train_file, val_file, val_ratio)
 
-
 def format_and_split_data(file_path, train_file, val_file, val_ratio=0.1):
-    # Read the tokens from the file and join lines if they are not already joined
     with open(file_path, 'r', encoding='utf-8') as file:
-        lines = file.readlines()
-        tokens = [' '.join(line.strip().split()) for line in lines]  # Join tokens on the same line
+        tokens = [' '.join(line.strip().split()) for line in file.readlines()]
 
-    # Calculate the number of validation samples
     val_size = int(len(tokens) * val_ratio)
-
-    # Split the tokens into training and validation sets
     train_tokens = tokens[:-val_size]
     val_tokens = tokens[-val_size:]
 
-    # Write the training tokens to the training file
     with open(train_file, 'w', encoding='utf-8') as file:
         file.write('\n'.join(train_tokens) + '\n')
-
-    # Write the validation tokens to the validation file
     with open(val_file, 'w', encoding='utf-8') as file:
         file.write('\n'.join(val_tokens) + '\n')
 
@@ -108,13 +150,13 @@ def find_vocab_size(file_path):
         for line in file:
             tokens = [int(token) for token in line.strip().split()]
             max_token = max(max_token, max(tokens))
-    return max_token + 1  # Assuming tokens start from 0
+    return max_token + 1
 
 # Example usage:
-# encode_file('data/raw_data.txt', 'data/encoded_data.txt', 'data/training_data.txt', 'data/validation_data.txt')
-
-vocab_size = find_vocab_size('data/training_data.txt')
-print("Vocabulary Size:", vocab_size)
+# encode_file('data/raw_data.txt', val_ratio=0.1, context_window=1024)
+#vocab_size = find_vocab_size('data/svelte_docs/training_data.txt')
+#print("Vocabulary Size:", vocab_size)import torch
+import math
 import torch.nn as nn
 
 class GPTTransformerBlock(nn.Module):
@@ -137,48 +179,23 @@ class GPTTransformerBlock(nn.Module):
         out = self.norm2(self.dropout(forward_output) + x)  # Apply dropout after feed-forward network
 
         return out
-
-
-# Alternative Learnable Positional Embeddings
-'''
-class PositionalEncoding(nn.Module):
-    def __init__(self, embed_size, max_len=5000, learnable=True):
-        super(PositionalEncoding, self).__init__()
-        self.learnable = learnable
-
-        # Initial sinusoidal positional encoding
-        pe = torch.zeros(max_len, embed_size)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, embed_size, 2).float() * (-math.log(10000.0) / embed_size))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
-
-        # Register as a buffer or a learnable parameter
-        if self.learnable:
-            self.pe = nn.Parameter(pe)  # Learnable positional embeddings
-        else:
-            self.register_buffer('pe', pe)  # Fixed sinusoidal embeddings
-
-    def forward(self, x):
-        x = x + self.pe[:x.size(0), :]
-        return x
-'''# main.py
+# main.py
 import argparse
 import torch
+import wandb
 
-from torch.cuda.amp import GradScaler
 from encode import encode_file
 from model import GPTModel
 from predict import predict_model
 
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import WandbLogger
 
 def train_model():
     # Initialize model
     model = GPTModel(
-        embed_size=1024, 
+        embed_size=768, 
         num_layers=12, 
         heads=16, 
         forward_expansion=4, 
@@ -187,21 +204,25 @@ def train_model():
         batch_size=32,
         sequence_length=128, 
         max_epochs=1,
-        training_file_path='data/training_data.txt',
-        validation_file_path='data/validation_data.txt',
-        trainable_pos_emb=False
+        training_file_path='data/svelte_docs/training_data.txt',
+        validation_file_path='data/svelte_docs/validation_data.txt'
     )
 
     print("Model Hyperparameters")
     print(model.hparams)  # Print the model's hyperparameters
 
     # Initialize the TensorBoard logger
-    logger = TensorBoardLogger("tb_logs", name="gpt", log_graph=True)
+    tb_logger = TensorBoardLogger("tb_logs", name="gpt", log_graph=True)
+    # initialise the wandb logger and name your wandb project
+    wandb_logger = WandbLogger(project='gpt')
+
+    # add your batch size to the wandb config
+    wandb_logger.experiment.config["batch_size"] = model.batch_size
     torch.set_float32_matmul_precision('medium')  # Enable mixed precision training
 
     trainer = Trainer(
         max_epochs=model.max_epochs,
-        logger=logger,
+        logger=[tb_logger, wandb_logger],
         devices = torch.cuda.device_count() if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
         precision='16-mixed'  # Add this line to enable 16-bit precision mixed precision (AMP)
@@ -211,7 +232,8 @@ def train_model():
 
     # Train the model with AMP
     trainer.fit(model)
-    logger.save()  # Save the TensorBoard logs
+    tb_logger.save()  # Save the TensorBoard logs
+    wandb.finish()  # Finish the W&B run
 
     # Optionally save the final model
     torch.save(model.state_dict(), 'final_model.pth')
@@ -249,26 +271,13 @@ if __name__ == "__main__":
     main(args)import torch
 import lightning as L
 import torch.nn as nn
-import math
 
 from torch.nn import functional as F
 from layers import GPTTransformerBlock
-from dataset import TokenizedTextDataset
-from torch.utils.data import DataLoader
-from torch.nn.utils.rnn import pad_sequence
-
-# Collate function outside the dataset class
-def collate_fn(batch):
-    inputs, targets, masks = zip(*batch)
-    inputs_padded = pad_sequence(inputs, batch_first=True, padding_value=0)
-    targets_padded = pad_sequence(targets, batch_first=True, padding_value=0)
-    masks_padded = pad_sequence(masks, batch_first=True, padding_value=0)  # Pad attention masks
-
-    return inputs_padded, targets_padded, masks_padded
-
+from util import sinusoidal_positional_encoding
 
 class GPTModel(L.LightningModule):
-    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, sequence_length, max_epochs, training_file_path, validation_file_path, trainable_pos_emb=False,):
+    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, sequence_length, max_epochs, training_file_path, validation_file_path):
         super(GPTModel, self).__init__()
         self.save_hyperparameters() # Save the model's hyperparameters
         self.embed_size = embed_size
@@ -279,7 +288,6 @@ class GPTModel(L.LightningModule):
         self.batch_size = batch_size
         self.sequence_length = sequence_length
         self.max_epochs = max_epochs
-        self.trainable_pos_emb = trainable_pos_emb
         self.training_file_path = training_file_path
         self.validation_file_path = validation_file_path
 
@@ -290,25 +298,36 @@ class GPTModel(L.LightningModule):
             self.dataset_length = sum(1 for _ in f)
 
         self.embedding = nn.Embedding(self.vocab_size, self.embed_size)
-        # self.pos_embedding = nn.Parameter(torch.zeros(1, 5000, embed_size))  # Comment out or remove
-        self.pos_embedding = self.create_pos_embedding(sequence_length, embed_size)  # Call create_pos_embedding here
+        self.pos_embbedings = nn.Parameter(sinusoidal_positional_encoding(embed_size, max_len=sequence_length))
 
         self.layers = nn.ModuleList([
             GPTTransformerBlock(embed_size, heads, forward_expansion, dropout_rate)
             for _ in range(num_layers)
         ])
-        self.output_layer = nn.Linear(embed_size, vocab_size)
+        self.output_layer = nn.Linear(embed_size, vocab_size, bias=False)
+        self.output_layer.weight = self.embedding.weight
 
-    @staticmethod
-    def create_pos_embedding(max_len, d_model):
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
-        return nn.Parameter(pe, requires_grad=False)
+    def forward(self, x, mask=None):
+        x = self.embedding(x)
+        current_seq_length = x.size(1)
+        x = x + self.pos_embbedings[:, :current_seq_length, :]
+    
+        # Transpose x to have shape (sequence_length, batch_size, embed_size)
+        x = x.transpose(0, 1)
 
+        # Adjust the mask for multi-head attention
+        if mask is not None:
+            mask = self.create_mask(mask, current_seq_length)
+        else:
+            print("Mask is None")
+
+        for layer in self.layers:
+            x = layer(x, mask=mask)  # Pass the mask to each layer
+
+        x = self.output_layer(x)
+
+        return x
+    
     def create_mask(self, mask, current_seq_length):
         batch_size = mask.size(0)  # Get the actual batch size
         # Expand mask for the number of heads and sequence length
@@ -318,29 +337,6 @@ class GPTModel(L.LightningModule):
         mask = mask.repeat(1, current_seq_length, 1)  # Now [batch_size*num_heads, seq_len, seq_len]
     
         return mask
-
-    def forward(self, x, mask=None):
-
-        x = self.embedding(x)
-        current_seq_length = x.size(1)
-        # Ensure positional embeddings have the correct shape
-        pos_emb = self.pos_embedding[:, :current_seq_length, :]
-        pos_emb = pos_emb.expand(x.size(0), -1, -1)  # Expand along batch size
-        x = x + pos_emb
-
-        # Transpose x to have shape (sequence_length, batch_size, embed_size)
-        x = x.transpose(0, 1)
-
-        # Adjust the mask for multi-head attention
-        if mask is not None:
-            mask = self.create_mask(mask, current_seq_length)
-
-        for layer in self.layers:
-            x = layer(x, mask=mask)  # Pass the mask to each layer
-
-        x = self.output_layer(x)
-
-        return x
         
     def masked_loss(self, outputs, targets, masks):
         # Flatten outputs and targets
@@ -371,16 +367,8 @@ class GPTModel(L.LightningModule):
         self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
-    def train_dataloader(self):
-        train_dataset = TokenizedTextDataset(self.training_file_path, self.sequence_length)
-        return DataLoader(train_dataset, batch_size=self.batch_size, collate_fn=collate_fn, shuffle=True, pin_memory=True)
-
-    def val_dataloader(self):
-        val_dataset = TokenizedTextDataset(self.validation_file_path, self.sequence_length)
-        return DataLoader(val_dataset, batch_size=self.batch_size, collate_fn=collate_fn, pin_memory=True)
-
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=0.0001, weight_decay=0.01)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=0.001, weight_decay=0.01)
 
         num_batches_per_epoch = self.dataset_length // self.batch_size
         if self.dataset_length % self.batch_size != 0:
@@ -398,7 +386,6 @@ class GPTModel(L.LightningModule):
                 'interval': 'step',  # 'step' means the scheduler step is called after every batch
             },
         }
-
 
 class WarmupCosineLR(torch.optim.lr_scheduler._LRScheduler):
     def __init__(self, optimizer, warmup_steps, total_steps, min_lr=0.000001, last_epoch=-1):
@@ -537,3 +524,38 @@ def generate_text(input_text, tokenizer, model, temperature=1.0, top_p=0.9):
     print(f"Generated text: {generated_text}")  # Debug print
     return generated_text
 
+import random
+import math
+import torch
+from dataset_old import TokenizedTextDataset  
+
+# Initalize with sinusoidal positional encoding but still learnable 
+def sinusoidal_positional_encoding(embed_size, max_len):
+    pe = torch.zeros(max_len, embed_size)
+    position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+    div_term = torch.exp(torch.arange(0, embed_size, 2).float() * (-math.log(10000.0) / embed_size))
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)
+    return pe.unsqueeze(0)
+
+
+def find_sequence_length():
+    # Load the dataset
+    train_dataset = TokenizedTextDataset('data/training_data.txt')
+
+    # Ensure the sample size is not larger than the dataset size
+    sample_size = min(10000, len(train_dataset))  # Adjust this value based on your needs
+
+    # Sample a subset of the dataset
+    samples = random.sample(list(train_dataset), sample_size)
+
+    # Print out a few samples
+    for i in range(5):
+        print(samples[i])
+
+    # Compute the maximum length of the samples
+    max_len = max(max(tensor.shape[0] for tensor in sample) for sample in samples)
+    print("Max Length", max_len)
+
+#if __name__ == "__main__":
+   # find_sequence_length()

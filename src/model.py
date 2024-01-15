@@ -1,23 +1,10 @@
 import torch
 import lightning as L
 import torch.nn as nn
-import math
 
 from torch.nn import functional as F
-from layers import GPTTransformerBlock, PositionalEncoding
-from dataset import TokenizedTextDataset
-from torch.utils.data import DataLoader
-from torch.nn.utils.rnn import pad_sequence
-
-# Collate function outside the dataset class
-def collate_fn(batch):
-    inputs, targets, masks = zip(*batch)
-    inputs_padded = pad_sequence(inputs, batch_first=True, padding_value=0)
-    targets_padded = pad_sequence(targets, batch_first=True, padding_value=0)
-    masks_padded = pad_sequence(masks, batch_first=True, padding_value=0)  # Pad attention masks
-
-    return inputs_padded, targets_padded, masks_padded
-
+from layers import GPTTransformerBlock
+from util import sinusoidal_positional_encoding
 
 class GPTModel(L.LightningModule):
     def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, sequence_length, max_epochs, training_file_path, validation_file_path):
@@ -41,19 +28,20 @@ class GPTModel(L.LightningModule):
             self.dataset_length = sum(1 for _ in f)
 
         self.embedding = nn.Embedding(self.vocab_size, self.embed_size)
-        self.pos_embbedings  = PositionalEncoding(self.embed_size, max_len=sequence_length) 
+        self.pos_embbedings = nn.Parameter(sinusoidal_positional_encoding(embed_size, max_len=sequence_length))
 
         self.layers = nn.ModuleList([
             GPTTransformerBlock(embed_size, heads, forward_expansion, dropout_rate)
             for _ in range(num_layers)
         ])
-        self.output_layer = nn.Linear(embed_size, vocab_size)
+        self.output_layer = nn.Linear(embed_size, vocab_size, bias=False)
+        self.output_layer.weight = self.embedding.weight
 
     def forward(self, x, mask=None):
         x = self.embedding(x)
-        x = self.pos_embbedings(x) 
         current_seq_length = x.size(1)
-
+        x = x + self.pos_embbedings[:, :current_seq_length, :]
+    
         # Transpose x to have shape (sequence_length, batch_size, embed_size)
         x = x.transpose(0, 1)
 
@@ -109,16 +97,8 @@ class GPTModel(L.LightningModule):
         self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
-    def train_dataloader(self):
-        train_dataset = TokenizedTextDataset(self.training_file_path, self.sequence_length)
-        return DataLoader(train_dataset, batch_size=self.batch_size, collate_fn=collate_fn, shuffle=True, pin_memory=True)
-
-    def val_dataloader(self):
-        val_dataset = TokenizedTextDataset(self.validation_file_path, self.sequence_length)
-        return DataLoader(val_dataset, batch_size=self.batch_size, collate_fn=collate_fn, pin_memory=True)
-
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=0.0001, weight_decay=0.01)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=0.001, weight_decay=0.01)
 
         num_batches_per_epoch = self.dataset_length // self.batch_size
         if self.dataset_length % self.batch_size != 0:
@@ -136,7 +116,6 @@ class GPTModel(L.LightningModule):
                 'interval': 'step',  # 'step' means the scheduler step is called after every batch
             },
         }
-
 
 class WarmupCosineLR(torch.optim.lr_scheduler._LRScheduler):
     def __init__(self, optimizer, warmup_steps, total_steps, min_lr=0.000001, last_epoch=-1):

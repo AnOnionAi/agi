@@ -1,5 +1,16 @@
-from torch.utils.data import Dataset
 import torch
+import lightning as L
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import DataLoader, Dataset
+
+# Collate function outside the dataset class
+def collate_fn(batch):
+    inputs, targets, masks = zip(*batch)
+    inputs_padded = pad_sequence(inputs, batch_first=True, padding_value=0)
+    targets_padded = pad_sequence(targets, batch_first=True, padding_value=0)
+    masks_padded = pad_sequence(masks, batch_first=True, padding_value=0)  # Pad attention masks
+
+    return inputs_padded, targets_padded, masks_padded
 
 class TokenizedTextDataset(Dataset):
     def __init__(self, file_path, sequence_length, padding_token=0, in_memory=True):
@@ -54,3 +65,25 @@ class TokenizedTextDataset(Dataset):
         attention_mask = torch.tensor(attention_mask[:-1], dtype=torch.float)
 
         return input_sequence, target_sequence, attention_mask
+
+
+
+class GPTDataModule(L.LightningDataModule):
+    def __init__(self, train_file, val_file, batch_size=32, sequence_length=128):
+        super().__init__()
+        self.train_file = train_file
+        self.val_file = val_file
+        self.batch_size = batch_size
+        self.seq_length = sequence_length
+
+    def setup(self, stage=None):
+        # Create instances of the TokenizedTextDataset for training and validation
+        if stage == 'fit' or stage is None:
+            self.train_dataset = TokenizedTextDataset(self.train_file, self.seq_length)
+            self.val_dataset = TokenizedTextDataset(self.val_file, self.seq_length)
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=collate_fn, pin_memory=True)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True)

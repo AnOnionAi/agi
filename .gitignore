@@ -170,4 +170,5 @@ tb_logs/
 *.log
 *.ckpt
 *.ckpt.*
-
+wandb/
+data/
