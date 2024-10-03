@@ -3,12 +3,16 @@ import os
 import argparse
 import torch
 import wandb
+import datetime 
+import yaml 
 
 from encode import encode_text_file, encode_jsonl_file, restructure_data
 from model import GPTModel
 from predict import predict_model
 from dataset import GPTDataModule  # Import the updated GPTDataModule
-
+from gcs_utils import upload_blob
+from callbacks import GCSCheckpointCallback, GCSTensorBoardLoggerCallback
+from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 from pytorch_lightning.loggers import WandbLogger
@@ -17,59 +21,109 @@ from pytorch_lightning.loggers import WandbLogger
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "zeti-nube-dev-key.json"
 
 def train_model(bucket_name, train_blob_name, val_blob_name):
-    # Initialize model
-    model = GPTModel(
-        embed_size=768, 
-        num_layers=12, 
-        heads=16, 
-        forward_expansion=4, 
-        dropout_rate=0.1,
-        vocab_size=50233,
-        batch_size=32,
-        sequence_length=1024, 
-        max_epochs=10,
-        training_file_path='',  # Not needed as data is handled by DataModule
-        validation_file_path=''  # Not needed as data is handled by DataModule
-    )
-
-    print("Model Hyperparameters")
-    print(model.hparams)  # Print the model's hyperparameters
+    # Generate a unique timestamped directory name
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    experiment_dir = f'agi/experiments/{timestamp}/'
 
     # Initialize your data module
     data_module = GPTDataModule(
         bucket_name=bucket_name,
-        train_blob_name=train_blob_name,  # e.g., 'agi/svelte_docs/training_data.txt'
-        val_blob_name=val_blob_name,      # e.g., 'agi/svelte_docs/validation_data.txt'
-        batch_size=model.batch_size,
-        sequence_length=model.sequence_length
+        train_blob_name=train_blob_name,
+        val_blob_name=val_blob_name,
+        batch_size=32,
+        sequence_length=1024
+    )
+    data_module.setup()
+
+    # Calculate dataset length
+    dataset_length = len(data_module.train_dataset)
+
+    # Initialize model with dataset_length
+    model = GPTModel(
+        embed_size=768,
+        num_layers=12,
+        heads=16,
+        forward_expansion=4,
+        dropout_rate=0.1,
+        vocab_size=50233,
+        batch_size=32,
+        sequence_length=1024,
+        max_epochs=10,
+        dataset_length=dataset_length
     )
 
-    # Initialize the TensorBoard logger
-    tb_logger = TensorBoardLogger("tb_logs", name="gpt", log_graph=True)
-    # Initialize the WandB logger and name your WandB project
+    # Define local directories with the timestamp
+    local_checkpoint_dir = f'checkpoints/{timestamp}/'
+    local_tb_log_dir = f'tb_logs/{timestamp}/'
+
+    # Ensure the local directories exist
+    os.makedirs(local_checkpoint_dir, exist_ok=True)
+    os.makedirs(local_tb_log_dir, exist_ok=True)
+
+    # **Save hyperparameters to a YAML file**
+    hparams_file = os.path.join(local_checkpoint_dir, 'hparams.yaml')
+    with open(hparams_file, 'w') as f:
+        yaml.dump(model.hparams, f)
+
+    # **Upload hparams file to GCS**
+    gcs_hparams_path = f'{experiment_dir}checkpoints/hparams.yaml'
+    upload_blob(bucket_name, hparams_file, gcs_hparams_path)
+    print(f"Hyperparameters saved to gs://{bucket_name}/{gcs_hparams_path}")
+
+    # Initialize the loggers with the new local directory
+    tb_logger = TensorBoardLogger(local_tb_log_dir, name="gpt", log_graph=True)
     wandb_logger = WandbLogger(project='gpt')
-
-    # Add your batch size to the WandB config
     wandb_logger.experiment.config["batch_size"] = model.batch_size
-    torch.set_float32_matmul_precision('medium')  # Enable mixed precision training
 
+    # Define the GCS paths using the experiment directory
+    gcs_checkpoint_path = f'{experiment_dir}checkpoints/'
+    gcs_tb_log_dir = f'{experiment_dir}tb_logs/'
+
+    # Define the custom checkpoint callback
+    checkpoint_callback = GCSCheckpointCallback(
+        bucket_name=bucket_name,
+        gcs_ckpt_path=gcs_checkpoint_path,
+        dirpath=local_checkpoint_dir,
+        filename='model-{epoch:02d}-{val_loss:.2f}',
+        save_top_k=3,
+        monitor='val_loss',
+        mode='min'
+    )
+
+    # Define the custom TensorBoard logger callback
+    tb_logger_callback = GCSTensorBoardLoggerCallback(
+        bucket_name=bucket_name,
+        local_tb_log_dir=local_tb_log_dir,
+        gcs_tb_log_dir=gcs_tb_log_dir,
+        upload_interval=300  # Adjust the interval as needed
+    )
+
+    # Initialize the Trainer with the custom callbacks
     trainer = Trainer(
         max_epochs=model.max_epochs,
         logger=[tb_logger, wandb_logger],
         devices=torch.cuda.device_count() if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
-        precision='16-mixed'  # Enable 16-bit precision mixed precision (AMP)
-        #limit_train_batches=0.1,  # Uncomment to limit training data to 10%
-        #limit_val_batches=0.1,    # Uncomment to limit validation data to 10%
+        precision='16-mixed',
+        callbacks=[checkpoint_callback, tb_logger_callback]
     )
 
-    # Train the model with AMP
+    # Train the model
     trainer.fit(model, datamodule=data_module)
-    tb_logger.save()  # Save the TensorBoard logs
-    wandb.finish()     # Finish the W&B run
+    tb_logger.save()
+    wandb.finish()
 
-    # Optionally save the final model
-    torch.save(model.state_dict(), 'final_model.pth')
+    # Save and upload the final model (optional)
+    local_model_path = 'final_model.pth'
+    torch.save(model.state_dict(), local_model_path)
+    gcs_model_path = f'{experiment_dir}final_model.pth'  # Use the experiment directory
+    upload_blob(bucket_name, local_model_path, gcs_model_path)
+    print(f"Model saved to gs://{bucket_name}/{gcs_model_path}")
+
+    # Optionally, clean up local files
+    # os.remove(local_model_path)
+    # shutil.rmtree(local_checkpoint_dir)
+    # shutil.rmtree(local_tb_log_dir)
 
 def main(args):
     if args.command == 'encode':

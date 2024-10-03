@@ -8,9 +8,13 @@ from layers import GPTTransformerBlock
 from util import sinusoidal_positional_encoding
 
 class GPTModel(L.LightningModule):
-    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, sequence_length, max_epochs, training_file_path, validation_file_path):
+    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate,
+                 vocab_size, batch_size, sequence_length, max_epochs,
+                 dataset_length):
         super(GPTModel, self).__init__()
-        self.save_hyperparameters() # Save the model's hyperparameters
+        self.save_hyperparameters()  # Save the model's hyperparameters
+        self.dataset_length = dataset_length  # Use the passed dataset_length
+
         self.embed_size = embed_size
         self.num_layers = num_layers
         self.heads = heads
@@ -19,14 +23,9 @@ class GPTModel(L.LightningModule):
         self.batch_size = batch_size
         self.sequence_length = sequence_length
         self.max_epochs = max_epochs
-        self.training_file_path = training_file_path
-        self.validation_file_path = validation_file_path
 
         # Example input array (adjust the shape according to your model's input)
         self.example_input_array = torch.zeros((1, sequence_length), dtype=torch.long)
-
-        with open(training_file_path, 'r') as f:
-            self.dataset_length = sum(1 for _ in f)
 
         self.embedding = nn.Embedding(self.vocab_size, self.embed_size)
         self.pos_embbedings = nn.Parameter(sinusoidal_positional_encoding(embed_size, max_len=sequence_length))
