@@ -2,6 +2,10 @@ Welcome to 'AGI' – our ambitious journey towards creating a scaled-down yet po
 
 Our mission is to engineer an AI model that can not only understand and write code in multiple programming languages but also explain its reasoning and logic. The immediate scope of our project centers on Python, with plans to expand into other languages as we progress.
 
+Insert Code Into Text File:
+
+`find . -type f \( -name "*.py" -o -name "*.toml" -o -name "*.yaml" -o -name "*.json" -o -name "*.md" \) -exec cat {} + > codebase.txt`
+
 Encode:
 
 `poetry run python src/main.py encode data/raw_data.txt data/training_data.txt`

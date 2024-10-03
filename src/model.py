@@ -1,3 +1,4 @@
+# model.py
 import torch
 import lightning as L
 import torch.nn as nn
@@ -46,10 +47,8 @@ class GPTModel(L.LightningModule):
         x = x.transpose(0, 1)
 
         # Adjust the mask for multi-head attention
-        if mask is not None:
-            mask = self.create_mask(mask, current_seq_length)
-        else:
-            print("Mask is None")
+        causal_mask = self.create_causal_mask(current_seq_length)
+        mask = mask.unsqueeze(1) | causal_mask
 
         for layer in self.layers:
             x = layer(x, mask=mask)  # Pass the mask to each layer
@@ -58,15 +57,10 @@ class GPTModel(L.LightningModule):
 
         return x
     
-    def create_mask(self, mask, current_seq_length):
-        batch_size = mask.size(0)  # Get the actual batch size
-        # Expand mask for the number of heads and sequence length
-        mask = mask.unsqueeze(1)  # Now [batch_size, 1, seq_len]
-        mask = mask.repeat(1, self.heads, 1)  # Now [batch_size, num_heads, seq_len]
-        mask = mask.view(batch_size * self.heads, 1, current_seq_length)  # Now [batch_size*num_heads, 1, seq_len]
-        mask = mask.repeat(1, current_seq_length, 1)  # Now [batch_size*num_heads, seq_len, seq_len]
-    
+    def create_causal_mask(self, size):
+        mask = torch.triu(torch.ones(size, size, device=x.device), diagonal=1).bool()
         return mask
+
         
     def masked_loss(self, outputs, targets, masks):
         # Flatten outputs and targets
