@@ -4,7 +4,15 @@ Our mission is to engineer an AI model that can not only understand and write co
 
 Insert Code Into Text File:
 
-`find . -type f \( -name "*.py" -o -name "*.toml" -o -name "*.yaml" -o -name "*.json" -o -name "*.md" \) -exec cat {} + > codebase.txt`
+`find . -type f \( -name "*.py" -o -name "*.toml" -o -name "*.yaml" -o -name "*.ipynb" -o -name "*.md" \) -exec cat {} + > codebase.txt`
+
+`find . -type f \( -name "*.py" -o -name "*.toml" -o -name "*.yaml" -o -name "*.md" \) -exec cat {} + > codebase.txt && \
+find . -type f -name "*.ipynb" -exec sh -c 'jq -r ".cells[].source[]" "$0"' {} \; >> codebase.txt`
+
+
+Upload
+
+`export GOOGLE_APPLICATION_CREDENTIALS="zeti-nube-dev-key.json"`
 
 Encode:
 

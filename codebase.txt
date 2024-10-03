@@ -6,6 +6,82 @@ which provides the `--lf` and `--ff` options, as well as the `cache` fixture.
 **Do not** commit this to version control.
 
 See [the docs](https://docs.pytest.org/en/stable/how-to/cache.html) for more information.
+import os
+import sys
+from google.cloud import storage
+from google.api_core.exceptions import GoogleAPIError
+
+def upload_directory_to_gcs(local_directory, bucket_name, gcs_prefix='agi/'):
+    """
+    Uploads the contents of a local directory to a Google Cloud Storage bucket.
+
+    :param local_directory: Path to the local directory to upload.
+    :param bucket_name: Name of the GCS bucket.
+    :param gcs_prefix: GCS prefix (folder path) within the bucket.
+    """
+    # Initialize the GCS client
+    try:
+        client = storage.Client()
+    except Exception as e:
+        print(f"Error initializing Google Cloud Storage client: {e}")
+        sys.exit(1)
+
+    # Get the bucket
+    try:
+        bucket = client.get_bucket(bucket_name)
+    except GoogleAPIError as e:
+        print(f"Error accessing bucket '{bucket_name}': {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Unexpected error accessing bucket '{bucket_name}': {e}")
+        sys.exit(1)
+
+    # Walk through the local directory
+    for root, dirs, files in os.walk(local_directory):
+        for filename in files:
+            local_path = os.path.join(root, filename)
+
+            # Compute the relative path to maintain directory structure in GCS
+            relative_path = os.path.relpath(local_path, local_directory)
+            gcs_path = os.path.join(gcs_prefix, relative_path).replace("\\", "/")  # For Windows compatibility
+
+            # Create a blob object
+            blob = bucket.blob(gcs_path)
+
+            # Upload the file
+            try:
+                blob.upload_from_filename(local_path)
+                print(f"Uploaded {local_path} to gs://{bucket_name}/{gcs_path}")
+            except FileNotFoundError:
+                print(f"Error: The file {local_path} was not found.")
+            except GoogleAPIError as e:
+                print(f"Google API error uploading {local_path}: {e}")
+            except Exception as e:
+                print(f"Unexpected error uploading {local_path}: {e}")
+
+    print("All files have been uploaded successfully.")
+
+if __name__ == "__main__":
+    import argparse
+
+    # Set up command-line argument parsing
+    parser = argparse.ArgumentParser(description='Upload a local directory to a Google Cloud Storage bucket.')
+    parser.add_argument('--local-dir', type=str, default='data',
+                        help='Path to the local directory to upload. Default is "data".')
+    parser.add_argument('--bucket', type=str, required=True,
+                        help='Name of the GCS bucket to upload to.')
+    parser.add_argument('--prefix', type=str, default='agi/',
+                        help='GCS prefix (folder path) within the bucket. Default is "agi/".')
+
+    args = parser.parse_args()
+
+    # Validate the local directory
+    if not os.path.isdir(args.local_dir):
+        print(f"Error: The directory '{args.local_dir}' does not exist.")
+        sys.exit(1)
+
+    # Call the upload function
+    upload_directory_to_gcs(args.local_dir, args.bucket, args.prefix)
 [tool.poetry]
 name = "agi"
 version = "0.2.0"
@@ -22,6 +98,7 @@ lightning = "^2.1.2"
 tensorboard = "^2.15.1"
 pyyaml = "^6.0.1"
 wandb = "^0.16.1"
+google-cloud-storage = "^2.18.2"
 
 [build-system]
 requires = ["poetry-core"]
@@ -66,573 +143,21 @@ def test_top_p_filtering_50(mock_logits):
     assert torch.is_tensor(filtered_logits), "Output should be a tensor"
     assert torch.any(filtered_logits == -float('Inf')), "Some logits should be set to -Inf with top_p=0.5"
 
-import torch
-import lightning as L
-from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader, Dataset
-
-# Collate function outside the dataset class
-def collate_fn(batch):
-    inputs, targets, masks = zip(*batch)
-    inputs_padded = pad_sequence(inputs, batch_first=True, padding_value=0)
-    targets_padded = pad_sequence(targets, batch_first=True, padding_value=0)
-    masks_padded = pad_sequence(masks, batch_first=True, padding_value=0)  # Pad attention masks
-
-    return inputs_padded, targets_padded, masks_padded
-
-class TokenizedTextDataset(Dataset):
-    def __init__(self, file_path, sequence_length, padding_token=0, in_memory=True):
-        self.file_path = file_path
-        self.sequence_length = sequence_length
-        self.padding_token = padding_token
-        self.in_memory = in_memory
-        self.data = []
-        self.line_offsets = []
-
-        if self.in_memory:
-            self._load_dataset_into_memory()
-        else:
-            self._index_file_positions()
-
-    def _load_dataset_into_memory(self):
-        with open(self.file_path, 'r') as file:
-            for line in file:
-                self.data.append(line.strip())
-
-    def _index_file_positions(self):
-        with open(self.file_path, 'r') as file:
-            offset = 0
-            for line in file:
-                self.line_offsets.append(offset)
-                offset += len(line)
-
-    def __len__(self):
-        return len(self.data) if self.in_memory else len(self.line_offsets)
-
-    def __getitem__(self, idx):
-        if self.in_memory:
-            line = self.data[idx]
-        else:
-            with open(self.file_path, 'r') as file:
-                file.seek(self.line_offsets[idx])
-                line = file.readline().strip()
-
-        sequence = list(map(int, line.split()))
-
-        # Padding or truncating the sequence
-        if len(sequence) < self.sequence_length:
-            sequence += [self.padding_token] * (self.sequence_length - len(sequence))
-        else:
-            sequence = sequence[:self.sequence_length]
-
-        # Generate an attention mask for the sequence
-        attention_mask = [1 if token != self.padding_token else 0 for token in sequence]
-
-        input_sequence = torch.tensor(sequence[:-1], dtype=torch.long)
-        target_sequence = torch.tensor(sequence[1:], dtype=torch.long)
-        attention_mask = torch.tensor(attention_mask[:-1], dtype=torch.float)
-
-        return input_sequence, target_sequence, attention_mask
-
-
-
-class GPTDataModule(L.LightningDataModule):
-    def __init__(self, train_file, val_file, batch_size=32, seq_length=128):
-        super().__init__()
-        self.train_file = train_file
-        self.val_file = val_file
-        self.batch_size = batch_size
-        self.seq_length = seq_length
-
-    def setup(self, stage=None):
-        # Create instances of the TokenizedTextDataset for training and validation
-        if stage == 'fit' or stage is None:
-            self.train_dataset = TokenizedTextDataset(self.train_file, self.seq_length)
-            self.val_dataset = TokenizedTextDataset(self.val_file, self.seq_length)
-
-    def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=collate_fn, pin_memory=True)
-
-    def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True)
-import os
-import json
-import tiktoken
-
-def restructure_data(input_file, output_file, context_window):
-    with open(input_file, 'r', encoding='utf-8') as file:
-        lines = file.readlines()
-
-    all_text = ""
-    for line in lines:
-        try:
-            data = json.loads(line)
-            text = data.get("text", "")
-            all_text += text + " "  # Add a space as a separator
-        except json.JSONDecodeError:
-            continue
-
-    chunks = [all_text[i:i+context_window] for i in range(0, len(all_text), context_window)]
-
-    with open(output_file, 'w', encoding='utf-8') as file:
-        for chunk in chunks:
-            file.write(chunk.strip() + '\n\n')
-
-def encode_file(file_path, val_ratio=0.1, context_window=1024):
-    structured_file = os.path.join(os.path.dirname(file_path), 'structured_data.txt')
-    restructure_data(file_path, structured_file, context_window)
-
-    encoder = tiktoken.encoding_for_model("gpt2")
-    directory = os.path.dirname(structured_file)
-    encoded_file = os.path.join(directory, 'encoded_data.txt')
-    train_file = os.path.join(directory, 'training_data.txt')
-    val_file = os.path.join(directory, 'validation_data.txt')
-
-    with open(structured_file, 'r', encoding='utf-8') as file:
-        sentences = file.readlines()
-
-    with open(encoded_file, 'w', encoding='utf-8') as file:
-        for sentence in sentences:
-            tokens = encoder.encode(sentence.strip())
-            token_str = ' '.join(map(str, tokens))
-            file.write(token_str + '\n')
-
-    format_and_split_data(encoded_file, train_file, val_file, val_ratio)
-
-def format_and_split_data(file_path, train_file, val_file, val_ratio=0.1):
-    with open(file_path, 'r', encoding='utf-8') as file:
-        tokens = [' '.join(line.strip().split()) for line in file.readlines()]
-
-    val_size = int(len(tokens) * val_ratio)
-    train_tokens = tokens[:-val_size]
-    val_tokens = tokens[-val_size:]
-
-    with open(train_file, 'w', encoding='utf-8') as file:
-        file.write('\n'.join(train_tokens) + '\n')
-    with open(val_file, 'w', encoding='utf-8') as file:
-        file.write('\n'.join(val_tokens) + '\n')
-
-def find_vocab_size(file_path):
-    max_token = 0
-    with open(file_path, 'r', encoding='utf-8') as file:
-        for line in file:
-            tokens = [int(token) for token in line.strip().split()]
-            max_token = max(max_token, max(tokens))
-    return max_token + 1
-
-# Example usage:
-# encode_file('data/raw_data.txt', val_ratio=0.1, context_window=1024)
-#vocab_size = find_vocab_size('data/svelte_docs/training_data.txt')
-#print("Vocabulary Size:", vocab_size)import torch
-import math
-import torch.nn as nn
-
-class GPTTransformerBlock(nn.Module):
-    def __init__(self, embed_size, heads, forward_expansion, dropout_rate):
-        super(GPTTransformerBlock, self).__init__()
-        self.attention = nn.MultiheadAttention(embed_dim=embed_size, num_heads=heads)
-        self.dropout = nn.Dropout(dropout_rate)  # Dropout layer
-        self.norm1 = nn.LayerNorm(embed_size)
-        self.norm2 = nn.LayerNorm(embed_size)
-        self.feed_forward = nn.Sequential(
-            nn.Linear(embed_size, forward_expansion * embed_size),
-            nn.GELU(),
-            nn.Linear(forward_expansion * embed_size, embed_size)
-        )
-
-    def forward(self, x, mask=None):
-        attention_output, _ = self.attention(x, x, x, attn_mask=mask)
-        x = self.norm1(self.dropout(attention_output) + x)  # Apply dropout after attention
-        forward_output = self.feed_forward(x)
-        out = self.norm2(self.dropout(forward_output) + x)  # Apply dropout after feed-forward network
-
-        return out
-# main.py
-import argparse
-import torch
-import wandb
-
-from encode import encode_file
-from model import GPTModel
-from predict import predict_model
-
-from lightning.pytorch import Trainer
-from lightning.pytorch.loggers import TensorBoardLogger
-from pytorch_lightning.loggers import WandbLogger
-
-def train_model():
-    # Initialize model
-    model = GPTModel(
-        embed_size=768, 
-        num_layers=12, 
-        heads=16, 
-        forward_expansion=4, 
-        dropout_rate=0.1,
-        vocab_size=50233, # Adjust as needed
-        batch_size=32,
-        sequence_length=128, 
-        max_epochs=1,
-        training_file_path='data/svelte_docs/training_data.txt',
-        validation_file_path='data/svelte_docs/validation_data.txt'
-    )
-
-    print("Model Hyperparameters")
-    print(model.hparams)  # Print the model's hyperparameters
-
-    # Initialize the TensorBoard logger
-    tb_logger = TensorBoardLogger("tb_logs", name="gpt", log_graph=True)
-    # initialise the wandb logger and name your wandb project
-    wandb_logger = WandbLogger(project='gpt')
-
-    # add your batch size to the wandb config
-    wandb_logger.experiment.config["batch_size"] = model.batch_size
-    torch.set_float32_matmul_precision('medium')  # Enable mixed precision training
-
-    trainer = Trainer(
-        max_epochs=model.max_epochs,
-        logger=[tb_logger, wandb_logger],
-        devices = torch.cuda.device_count() if torch.cuda.is_available() else 1,
-        accelerator="gpu" if torch.cuda.is_available() else 'auto',
-        precision='16-mixed'  # Add this line to enable 16-bit precision mixed precision (AMP)
-        #limit_train_batches=0.1,  # Limit the training data to 10% of the training set
-        #limit_val_batches=0.1,  # Limit the validation data to 10% of the validation set
-    )
-
-    # Train the model with AMP
-    trainer.fit(model)
-    tb_logger.save()  # Save the TensorBoard logs
-    wandb.finish()  # Finish the W&B run
-
-    # Optionally save the final model
-    torch.save(model.state_dict(), 'final_model.pth')
-
-def main(args):
-    if args.command == 'encode':
-        input_file = args.input_file if args.input_file else 'data/raw_data.txt'
-        encode_file(input_file)
-        print(f"Encoded Tokens written")
-    elif args.command == 'train':
-        train_model()
-        print("Training Complete")
-    elif args.command == 'predict':
-        input_text = "What is Svelte?"
-        predict_model(input_text)
-    else:
-        print("Invalid command")
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="AGI Model Operations")
-    subparsers = parser.add_subparsers(dest='command', help='select operation')
-
-    # Subparser for encoding
-    parser_encode = subparsers.add_parser('encode', help='Encode text data to tokens')
-    parser_encode.add_argument('input_file', type=str, nargs='?', default=None, help='Input file path')
-
-    # Subparser for training
-    parser_train = subparsers.add_parser('train', help='Train the GPT model')
-
-    # Add predict command
-    predict_parser = subparsers.add_parser('predict', help='predict output for a given input text')
-
-    # Parse the arguments and call the main function
-    args = parser.parse_args()
-    main(args)import torch
-import lightning as L
-import torch.nn as nn
-
-from torch.nn import functional as F
-from layers import GPTTransformerBlock
-from util import sinusoidal_positional_encoding
-
-class GPTModel(L.LightningModule):
-    def __init__(self, embed_size, num_layers, heads, forward_expansion, dropout_rate, vocab_size, batch_size, sequence_length, max_epochs, training_file_path, validation_file_path):
-        super(GPTModel, self).__init__()
-        self.save_hyperparameters() # Save the model's hyperparameters
-        self.embed_size = embed_size
-        self.num_layers = num_layers
-        self.heads = heads
-        self.forward_expansion = forward_expansion
-        self.vocab_size = vocab_size
-        self.batch_size = batch_size
-        self.sequence_length = sequence_length
-        self.max_epochs = max_epochs
-        self.training_file_path = training_file_path
-        self.validation_file_path = validation_file_path
-
-        # Example input array (adjust the shape according to your model's input)
-        self.example_input_array = torch.zeros((1, sequence_length), dtype=torch.long)
-
-        with open(training_file_path, 'r') as f:
-            self.dataset_length = sum(1 for _ in f)
-
-        self.embedding = nn.Embedding(self.vocab_size, self.embed_size)
-        self.pos_embbedings = nn.Parameter(sinusoidal_positional_encoding(embed_size, max_len=sequence_length))
-
-        self.layers = nn.ModuleList([
-            GPTTransformerBlock(embed_size, heads, forward_expansion, dropout_rate)
-            for _ in range(num_layers)
-        ])
-        self.output_layer = nn.Linear(embed_size, vocab_size, bias=False)
-        self.output_layer.weight = self.embedding.weight
-
-    def forward(self, x, mask=None):
-        x = self.embedding(x)
-        current_seq_length = x.size(1)
-        x = x + self.pos_embbedings[:, :current_seq_length, :]
-    
-        # Transpose x to have shape (sequence_length, batch_size, embed_size)
-        x = x.transpose(0, 1)
-
-        # Adjust the mask for multi-head attention
-        if mask is not None:
-            mask = self.create_mask(mask, current_seq_length)
-        else:
-            print("Mask is None")
-
-        for layer in self.layers:
-            x = layer(x, mask=mask)  # Pass the mask to each layer
-
-        x = self.output_layer(x)
-
-        return x
-    
-    def create_mask(self, mask, current_seq_length):
-        batch_size = mask.size(0)  # Get the actual batch size
-        # Expand mask for the number of heads and sequence length
-        mask = mask.unsqueeze(1)  # Now [batch_size, 1, seq_len]
-        mask = mask.repeat(1, self.heads, 1)  # Now [batch_size, num_heads, seq_len]
-        mask = mask.view(batch_size * self.heads, 1, current_seq_length)  # Now [batch_size*num_heads, 1, seq_len]
-        mask = mask.repeat(1, current_seq_length, 1)  # Now [batch_size*num_heads, seq_len, seq_len]
-    
-        return mask
-        
-    def masked_loss(self, outputs, targets, masks):
-        # Flatten outputs and targets
-        outputs_flat = outputs.view(-1, self.vocab_size)
-        targets_flat = targets.view(-1)
-
-        # Use masks to filter out loss from padding tokens
-        mask = masks.view(-1) == 1  # Flatten and convert to boolean mask
-        outputs_masked = outputs_flat[mask]
-        targets_masked = targets_flat[mask]
-
-        # Calculate cross-entropy loss only on non-padded tokens
-        return F.cross_entropy(outputs_masked, targets_masked)
-
-    def training_step(self, batch):
-        inputs, targets, masks = batch
-        outputs = self(inputs, mask=masks)
-        loss = self.masked_loss(outputs, targets, masks)
-
-        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-        return loss
-
-    def validation_step(self, batch):
-        inputs, targets, masks = batch
-        outputs = self(inputs, mask=masks)
-        loss = self.masked_loss(outputs, targets, masks)
-
-        self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
-        return loss
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=0.001, weight_decay=0.01)
-
-        num_batches_per_epoch = self.dataset_length // self.batch_size
-        if self.dataset_length % self.batch_size != 0:
-            num_batches_per_epoch += 1
-
-        total_steps = self.max_epochs * num_batches_per_epoch
-        warmup_steps = int(0.1 * total_steps)  # Example: 10% of total steps for warmup
-
-        scheduler = WarmupCosineLR(optimizer, warmup_steps=warmup_steps, total_steps=total_steps)
-
-        return {
-            'optimizer': optimizer,
-            'lr_scheduler': {
-                'scheduler': scheduler,
-                'interval': 'step',  # 'step' means the scheduler step is called after every batch
-            },
-        }
-
-class WarmupCosineLR(torch.optim.lr_scheduler._LRScheduler):
-    def __init__(self, optimizer, warmup_steps, total_steps, min_lr=0.000001, last_epoch=-1):
-        self.warmup_steps = warmup_steps
-        self.total_steps = total_steps
-        self.min_lr = min_lr
-        super().__init__(optimizer, last_epoch)
-
-    def get_lr(self):
-        if self.last_epoch < self.warmup_steps:
-            lr_scale = self.last_epoch / self.warmup_steps
-        else:
-            progress = (self.last_epoch - self.warmup_steps) / (self.total_steps - self.warmup_steps)
-            lr_scale = 0.5 * (1.0 + torch.cos(torch.tensor(progress, device=self._get_device())))
-
-        return [base_lr * lr_scale + self.min_lr for base_lr in self.base_lrs]
-
-    def _get_device(self):
-        return self.optimizer.param_groups[0]['params'][0].device
-
-
-import torch
-import torch.nn.functional as F
-from torch.distributions import Categorical
-from model import GPTModel
-import tiktoken
-import argparse
-import os
-import yaml  
-
-def get_latest_checkpoint(version):
-    checkpoint_dir = f'tb_logs/gpt/version_{version}/checkpoints/'
-    checkpoint_files = os.listdir(checkpoint_dir)
-    latest_checkpoint = os.path.join(checkpoint_dir, checkpoint_files[0])
-    return latest_checkpoint
-
-def read_hparams(version):
-    hparams_path = f'tb_logs/gpt/version_{version}/hparams.yaml'
-    with open(hparams_path) as file:
-        hparams = yaml.safe_load(file)
-    return hparams
-
-def predict_model(input_text, model_version=None):
-    tokenizer = tiktoken.encoding_for_model("gpt2")  # Ensure this matches your model's vocabulary
-
-    # Use the latest version if no specific version is provided
-    if model_version is None:
-        versions = [d for d in os.listdir('tb_logs/gpt') if d.startswith('version_')]
-        if versions:
-            versions.sort(key=lambda v: int(v.split('_')[1]), reverse=True)
-            model_version = versions[0].split('_')[1]
-        else:
-            raise Exception("No model versions found.")
-    else:
-        # Explicitly use version 12
-        model_version = '12'  # Hardcoded to version 12 for testing
-
-    print(f'Using model version {model_version}')
-    hparams = read_hparams(model_version)
-    model = GPTModel(
-        embed_size=hparams['embed_size'],
-        num_layers=hparams['num_layers'],
-        heads=hparams['heads'],
-        forward_expansion=hparams['forward_expansion'],
-        dropout_rate=hparams['dropout_rate'],
-        batch_size=hparams['batch_size'],
-        vocab_size=hparams['vocab_size'],
-        sequence_length=hparams['sequence_length'],
-        max_epochs=hparams['max_epochs'],
-        training_file_path=hparams['training_file_path'],
-        validation_file_path=hparams['validation_file_path']
-    )
-
-    checkpoint_path = get_latest_checkpoint(model_version)
-    checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
-    model.load_state_dict(checkpoint['state_dict'])
-    model.eval()
-
-    # Generate text using the trained model
-    generated_text = generate_text(input_text, tokenizer, model)
-    return generated_text
-
-def top_p_filtering(logits, top_p=0.9, filter_value=-float('Inf')):
-    """ Filter a distribution of logits using nucleus (top-p) sampling """
-    assert logits.dim() == 1  # batch size 1 for single word generation
-    sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-
-    # Remove tokens with cumulative probability above the threshold (nucleus)
-    sorted_indices_to_remove = cumulative_probs > top_p
-    # Shift the indices to the right to keep the first token above the threshold
-    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-    sorted_indices_to_remove[..., 0] = 0
-
-    indices_to_remove = sorted_indices[sorted_indices_to_remove]
-    logits[indices_to_remove] = filter_value
-    return logits
-
-def generate_text(input_text, tokenizer, model, temperature=1.0, top_p=0.9):
-    if not input_text.strip():
-        raise ValueError("Input text is empty")
-
-    # Tokenize the input text
-    input_ids = tokenizer.encode(input_text)
-
-    if not input_ids:
-        raise ValueError("Input text could not be tokenized")
-
-    # Convert to tensor and add batch dimension
-    input_ids = torch.tensor([input_ids], dtype=torch.long)
-
-    print(f"Encoded input ids: {input_ids}")  # Debug print
-
-    # Generate text
-    model.eval()
-    with torch.no_grad():
-        for i in range(model.sequence_length):
-            outputs = model(input_ids)
-            logits = outputs[0, -1, :] / temperature  # Select the logits for the last word in the sequence
-            filtered_logits = top_p_filtering(logits, top_p=top_p)
-
-            # Sample from the filtered distribution
-            probabilities = F.softmax(filtered_logits, dim=-1)
-            next_token_id = Categorical(probabilities).sample()
-
-            # Stop generating if end-of-sequence token is produced
-            if next_token_id.item() == tokenizer.eot_token:
-                print("End of sequence token reached.")  # Debug print
-                break
-
-            # Add batch dimension to make it a 2D tensor
-            next_token_id = next_token_id.unsqueeze(0).unsqueeze(0)  # Add two dimensions to make it a 2D tensor
-            input_ids = torch.cat((input_ids, next_token_id), dim=-1)
-
-    generated_text = tokenizer.decode(input_ids[0].tolist())
-    print(f"Generated text: {generated_text}")  # Debug print
-    return generated_text
-
-import random
-import math
-import torch
-from dataset_old import TokenizedTextDataset  
-
-# Initalize with sinusoidal positional encoding but still learnable 
-def sinusoidal_positional_encoding(embed_size, max_len):
-    pe = torch.zeros(max_len, embed_size)
-    position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-    div_term = torch.exp(torch.arange(0, embed_size, 2).float() * (-math.log(10000.0) / embed_size))
-    pe[:, 0::2] = torch.sin(position * div_term)
-    pe[:, 1::2] = torch.cos(position * div_term)
-    return pe.unsqueeze(0)
-
-
-def find_sequence_length():
-    # Load the dataset
-    train_dataset = TokenizedTextDataset('data/training_data.txt')
-
-    # Ensure the sample size is not larger than the dataset size
-    sample_size = min(10000, len(train_dataset))  # Adjust this value based on your needs
-
-    # Sample a subset of the dataset
-    samples = random.sample(list(train_dataset), sample_size)
-
-    # Print out a few samples
-    for i in range(5):
-        print(samples[i])
-
-    # Compute the maximum length of the samples
-    max_len = max(max(tensor.shape[0] for tensor in sample) for sample in samples)
-    print("Max Length", max_len)
-
-#if __name__ == "__main__":
-   # find_sequence_length()Welcome to 'AGI' – our ambitious journey towards creating a scaled-down yet powerful AI model. Inspired by the sophisticated capabilities of GPT-like models, this project focuses on harnessing deep learning, specifically using PyTorch and Transformer architectures, to develop an AI adept in programming language comprehension and generation.
+Welcome to 'AGI' – our ambitious journey towards creating a scaled-down yet powerful AI model. Inspired by the sophisticated capabilities of GPT-like models, this project focuses on harnessing deep learning, specifically using PyTorch and Transformer architectures, to develop an AI adept in programming language comprehension and generation.
 
 Our mission is to engineer an AI model that can not only understand and write code in multiple programming languages but also explain its reasoning and logic. The immediate scope of our project centers on Python, with plans to expand into other languages as we progress.
 
 Insert Code Into Text File:
 
-`find . -type f \( -name "*.py" -o -name "*.toml" -o -name "*.yaml" -o -name "*.json" -o -name "*.md" \) -exec cat {} + > codebase.txt`
+`find . -type f \( -name "*.py" -o -name "*.toml" -o -name "*.yaml" -o -name "*.ipynb" -o -name "*.md" \) -exec cat {} + > codebase.txt`
+
+`find . -type f \( -name "*.py" -o -name "*.toml" -o -name "*.yaml" -o -name "*.md" \) -exec cat {} + > codebase.txt && \
+find . -type f -name "*.ipynb" -exec sh -c 'jq -r ".cells[].source[]" "$0"' {} \; >> codebase.txt`
+
+
+Upload
+
+`export GOOGLE_APPLICATION_CREDENTIALS="zeti-nube-dev-key.json"`
 
 Encode:
 
@@ -933,13 +458,7 @@ trainable_pos_emb: false
 training_file_path: data/training_data.txt
 validation_file_path: data/validation_data.txt
 vocab_size: 50233
-{
-    "python.testing.pytestArgs": [
-        "tests"
-    ],
-    "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true
-}wandb_version: 1
+wandb_version: 1
 
 _wandb:
   desc: null
@@ -1008,45 +527,6 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
-{"_wandb": {"runtime": 42}}{
-    "os": "macOS-13.4-arm64-arm-64bit",
-    "python": "3.11.4",
-    "heartbeatAt": "2023-12-19T18:04:33.098199",
-    "startedAt": "2023-12-19T18:04:32.239800",
-    "docker": null,
-    "cuda": null,
-    "args": [
-        "train"
-    ],
-    "state": "running",
-    "program": "/Users/matthew/Projects/agi/src/main.py",
-    "codePathLocal": "src/main.py",
-    "codePath": "src/main.py",
-    "git": {
-        "remote": "https://github.com/ZetiAi/agi.git",
-        "commit": "f8a9c6116a38edbfc3deaecd4918a431c270a8d5"
-    },
-    "email": "matthew@zeti.dev",
-    "root": "/Users/matthew/Projects/agi",
-    "host": "Matthews-MacBook-Air.local",
-    "username": "matthew",
-    "executable": "/Users/matthew/Library/Caches/pypoetry/virtualenvs/agi-gXOjv4jF-py3.11/bin/python",
-    "cpu_count": 8,
-    "cpu_count_logical": 8,
-    "disk": {
-        "/": {
-            "total": 460.4317207336426,
-            "used": 11.017658233642578
-        }
-    },
-    "gpuapple": {
-        "type": "arm",
-        "vendor": "Apple"
-    },
-    "memory": {
-        "total": 24.0
-    }
-}
 wandb_version: 1
 
 _wandb:
@@ -1117,45 +597,6 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
-{"_wandb": {"runtime": 378}}{
-    "os": "macOS-13.4-arm64-arm-64bit",
-    "python": "3.11.4",
-    "heartbeatAt": "2023-12-19T18:16:02.458169",
-    "startedAt": "2023-12-19T18:16:01.522077",
-    "docker": null,
-    "cuda": null,
-    "args": [
-        "train"
-    ],
-    "state": "running",
-    "program": "/Users/matthew/Projects/agi/src/main.py",
-    "codePathLocal": "src/main.py",
-    "codePath": "src/main.py",
-    "git": {
-        "remote": "https://github.com/ZetiAi/agi.git",
-        "commit": "f8a9c6116a38edbfc3deaecd4918a431c270a8d5"
-    },
-    "email": "matthew@zeti.dev",
-    "root": "/Users/matthew/Projects/agi",
-    "host": "Matthews-MacBook-Air.local",
-    "username": "matthew",
-    "executable": "/Users/matthew/Library/Caches/pypoetry/virtualenvs/agi-gXOjv4jF-py3.11/bin/python",
-    "cpu_count": 8,
-    "cpu_count_logical": 8,
-    "disk": {
-        "/": {
-            "total": 460.4317207336426,
-            "used": 11.017658233642578
-        }
-    },
-    "gpuapple": {
-        "type": "arm",
-        "vendor": "Apple"
-    },
-    "memory": {
-        "total": 24.0
-    }
-}
 wandb_version: 1
 
 _wandb:
@@ -1225,45 +666,6 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
-{"_wandb": {"runtime": 1}}{
-    "os": "macOS-13.4-arm64-arm-64bit",
-    "python": "3.11.4",
-    "heartbeatAt": "2023-12-19T21:55:24.786400",
-    "startedAt": "2023-12-19T21:55:24.021796",
-    "docker": null,
-    "cuda": null,
-    "args": [
-        "train"
-    ],
-    "state": "running",
-    "program": "/Users/matthew/Projects/agi/src/main.py",
-    "codePathLocal": "src/main.py",
-    "codePath": "src/main.py",
-    "git": {
-        "remote": "https://github.com/ZetiAi/agi.git",
-        "commit": "f8a9c6116a38edbfc3deaecd4918a431c270a8d5"
-    },
-    "email": "matthew@zeti.dev",
-    "root": "/Users/matthew/Projects/agi",
-    "host": "Matthews-MacBook-Air.local",
-    "username": "matthew",
-    "executable": "/Users/matthew/Library/Caches/pypoetry/virtualenvs/agi-gXOjv4jF-py3.11/bin/python",
-    "cpu_count": 8,
-    "cpu_count_logical": 8,
-    "disk": {
-        "/": {
-            "total": 460.4317207336426,
-            "used": 11.017658233642578
-        }
-    },
-    "gpuapple": {
-        "type": "arm",
-        "vendor": "Apple"
-    },
-    "memory": {
-        "total": 24.0
-    }
-}
 wandb_version: 1
 
 _wandb:
@@ -1333,45 +735,6 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
-{"_wandb": {"runtime": 77}}{
-    "os": "macOS-13.4-arm64-arm-64bit",
-    "python": "3.11.4",
-    "heartbeatAt": "2023-12-19T17:49:46.063053",
-    "startedAt": "2023-12-19T17:49:45.191877",
-    "docker": null,
-    "cuda": null,
-    "args": [
-        "train"
-    ],
-    "state": "running",
-    "program": "/Users/matthew/Projects/agi/src/main.py",
-    "codePathLocal": "src/main.py",
-    "codePath": "src/main.py",
-    "git": {
-        "remote": "https://github.com/ZetiAi/agi.git",
-        "commit": "f8a9c6116a38edbfc3deaecd4918a431c270a8d5"
-    },
-    "email": "matthew@zeti.dev",
-    "root": "/Users/matthew/Projects/agi",
-    "host": "Matthews-MacBook-Air.local",
-    "username": "matthew",
-    "executable": "/Users/matthew/Library/Caches/pypoetry/virtualenvs/agi-gXOjv4jF-py3.11/bin/python",
-    "cpu_count": 8,
-    "cpu_count_logical": 8,
-    "disk": {
-        "/": {
-            "total": 460.4317207336426,
-            "used": 11.017658233642578
-        }
-    },
-    "gpuapple": {
-        "type": "arm",
-        "vendor": "Apple"
-    },
-    "memory": {
-        "total": 24.0
-    }
-}
 wandb_version: 1
 
 _wandb:
@@ -1441,45 +804,6 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
-{"_wandb": {"runtime": 34}}{
-    "os": "macOS-13.4-arm64-arm-64bit",
-    "python": "3.11.4",
-    "heartbeatAt": "2023-12-19T17:52:39.104381",
-    "startedAt": "2023-12-19T17:52:38.241513",
-    "docker": null,
-    "cuda": null,
-    "args": [
-        "train"
-    ],
-    "state": "running",
-    "program": "/Users/matthew/Projects/agi/src/main.py",
-    "codePathLocal": "src/main.py",
-    "codePath": "src/main.py",
-    "git": {
-        "remote": "https://github.com/ZetiAi/agi.git",
-        "commit": "f8a9c6116a38edbfc3deaecd4918a431c270a8d5"
-    },
-    "email": "matthew@zeti.dev",
-    "root": "/Users/matthew/Projects/agi",
-    "host": "Matthews-MacBook-Air.local",
-    "username": "matthew",
-    "executable": "/Users/matthew/Library/Caches/pypoetry/virtualenvs/agi-gXOjv4jF-py3.11/bin/python",
-    "cpu_count": 8,
-    "cpu_count_logical": 8,
-    "disk": {
-        "/": {
-            "total": 460.4317207336426,
-            "used": 11.017658233642578
-        }
-    },
-    "gpuapple": {
-        "type": "arm",
-        "vendor": "Apple"
-    },
-    "memory": {
-        "total": 24.0
-    }
-}
 wandb_version: 1
 
 _wandb:
@@ -1550,45 +874,6 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
-{"_wandb": {"runtime": 190}}{
-    "os": "macOS-13.4-arm64-arm-64bit",
-    "python": "3.11.4",
-    "heartbeatAt": "2023-12-20T03:28:42.486417",
-    "startedAt": "2023-12-20T03:28:41.643802",
-    "docker": null,
-    "cuda": null,
-    "args": [
-        "train"
-    ],
-    "state": "running",
-    "program": "/Users/matthew/Projects/agi/src/main.py",
-    "codePathLocal": "src/main.py",
-    "codePath": "src/main.py",
-    "git": {
-        "remote": "https://github.com/ZetiAi/agi.git",
-        "commit": "f8a9c6116a38edbfc3deaecd4918a431c270a8d5"
-    },
-    "email": "matthew@zeti.dev",
-    "root": "/Users/matthew/Projects/agi",
-    "host": "Matthews-MacBook-Air.local",
-    "username": "matthew",
-    "executable": "/Users/matthew/Library/Caches/pypoetry/virtualenvs/agi-gXOjv4jF-py3.11/bin/python",
-    "cpu_count": 8,
-    "cpu_count_logical": 8,
-    "disk": {
-        "/": {
-            "total": 460.4317207336426,
-            "used": 11.017658233642578
-        }
-    },
-    "gpuapple": {
-        "type": "arm",
-        "vendor": "Apple"
-    },
-    "memory": {
-        "total": 24.0
-    }
-}
 wandb_version: 1
 
 _wandb:
@@ -1658,45 +943,6 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
-{"_wandb": {"runtime": 208}}{
-    "os": "macOS-13.4-arm64-arm-64bit",
-    "python": "3.11.4",
-    "heartbeatAt": "2023-12-19T18:30:42.890279",
-    "startedAt": "2023-12-19T18:30:42.207409",
-    "docker": null,
-    "cuda": null,
-    "args": [
-        "train"
-    ],
-    "state": "running",
-    "program": "/Users/matthew/Projects/agi/src/main.py",
-    "codePathLocal": "src/main.py",
-    "codePath": "src/main.py",
-    "git": {
-        "remote": "https://github.com/ZetiAi/agi.git",
-        "commit": "f8a9c6116a38edbfc3deaecd4918a431c270a8d5"
-    },
-    "email": "matthew@zeti.dev",
-    "root": "/Users/matthew/Projects/agi",
-    "host": "Matthews-MacBook-Air.local",
-    "username": "matthew",
-    "executable": "/Users/matthew/Library/Caches/pypoetry/virtualenvs/agi-gXOjv4jF-py3.11/bin/python",
-    "cpu_count": 8,
-    "cpu_count_logical": 8,
-    "disk": {
-        "/": {
-            "total": 460.4317207336426,
-            "used": 11.017658233642578
-        }
-    },
-    "gpuapple": {
-        "type": "arm",
-        "vendor": "Apple"
-    },
-    "memory": {
-        "total": 24.0
-    }
-}
 wandb_version: 1
 
 _wandb:
@@ -1775,45 +1021,6 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
-{"train_loss_step": 76.74807739257812, "epoch": 0, "trainer/global_step": 99, "_timestamp": 1703020315.543234, "_runtime": 328.0678942203522, "_step": 1, "_wandb": {"runtime": 387}}{
-    "os": "macOS-13.4-arm64-arm-64bit",
-    "python": "3.11.4",
-    "heartbeatAt": "2023-12-19T21:06:28.806622",
-    "startedAt": "2023-12-19T21:06:27.463919",
-    "docker": null,
-    "cuda": null,
-    "args": [
-        "train"
-    ],
-    "state": "running",
-    "program": "/Users/matthew/Projects/agi/src/main.py",
-    "codePathLocal": "src/main.py",
-    "codePath": "src/main.py",
-    "git": {
-        "remote": "https://github.com/ZetiAi/agi.git",
-        "commit": "f8a9c6116a38edbfc3deaecd4918a431c270a8d5"
-    },
-    "email": "matthew@zeti.dev",
-    "root": "/Users/matthew/Projects/agi",
-    "host": "Matthews-MacBook-Air.local",
-    "username": "matthew",
-    "executable": "/Users/matthew/Library/Caches/pypoetry/virtualenvs/agi-gXOjv4jF-py3.11/bin/python",
-    "cpu_count": 8,
-    "cpu_count_logical": 8,
-    "disk": {
-        "/": {
-            "total": 460.4317207336426,
-            "used": 11.017658233642578
-        }
-    },
-    "gpuapple": {
-        "type": "arm",
-        "vendor": "Apple"
-    },
-    "memory": {
-        "total": 24.0
-    }
-}
 wandb_version: 1
 
 _wandb:
@@ -1882,45 +1089,6 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
-{
-    "os": "macOS-13.4-arm64-arm-64bit",
-    "python": "3.11.4",
-    "heartbeatAt": "2023-12-19T21:04:06.330095",
-    "startedAt": "2023-12-19T21:04:05.501494",
-    "docker": null,
-    "cuda": null,
-    "args": [
-        "train"
-    ],
-    "state": "running",
-    "program": "/Users/matthew/Projects/agi/src/main.py",
-    "codePathLocal": "src/main.py",
-    "codePath": "src/main.py",
-    "git": {
-        "remote": "https://github.com/ZetiAi/agi.git",
-        "commit": "f8a9c6116a38edbfc3deaecd4918a431c270a8d5"
-    },
-    "email": "matthew@zeti.dev",
-    "root": "/Users/matthew/Projects/agi",
-    "host": "Matthews-MacBook-Air.local",
-    "username": "matthew",
-    "executable": "/Users/matthew/Library/Caches/pypoetry/virtualenvs/agi-gXOjv4jF-py3.11/bin/python",
-    "cpu_count": 8,
-    "cpu_count_logical": 8,
-    "disk": {
-        "/": {
-            "total": 460.4317207336426,
-            "used": 11.017658233642578
-        }
-    },
-    "gpuapple": {
-        "type": "arm",
-        "vendor": "Apple"
-    },
-    "memory": {
-        "total": 24.0
-    }
-}
 wandb_version: 1
 
 _wandb:
@@ -2007,45 +1175,6 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
-{"train_loss_step": 67.03588104248047, "epoch": 0, "trainer/global_step": 321, "_timestamp": 1703024418.3802419, "_runtime": 1111.6249558925629, "_step": 7, "val_loss": 67.18185424804688, "train_loss_epoch": 81.49000549316406, "_wandb": {"runtime": 1110}}{
-    "os": "macOS-13.4-arm64-arm-64bit",
-    "python": "3.11.4",
-    "heartbeatAt": "2023-12-19T22:01:47.601614",
-    "startedAt": "2023-12-19T22:01:46.747415",
-    "docker": null,
-    "cuda": null,
-    "args": [
-        "train"
-    ],
-    "state": "running",
-    "program": "/Users/matthew/Projects/agi/src/main.py",
-    "codePathLocal": "src/main.py",
-    "codePath": "src/main.py",
-    "git": {
-        "remote": "https://github.com/ZetiAi/agi.git",
-        "commit": "f8a9c6116a38edbfc3deaecd4918a431c270a8d5"
-    },
-    "email": "matthew@zeti.dev",
-    "root": "/Users/matthew/Projects/agi",
-    "host": "Matthews-MacBook-Air.local",
-    "username": "matthew",
-    "executable": "/Users/matthew/Library/Caches/pypoetry/virtualenvs/agi-gXOjv4jF-py3.11/bin/python",
-    "cpu_count": 8,
-    "cpu_count_logical": 8,
-    "disk": {
-        "/": {
-            "total": 460.4317207336426,
-            "used": 11.017658233642578
-        }
-    },
-    "gpuapple": {
-        "type": "arm",
-        "vendor": "Apple"
-    },
-    "memory": {
-        "total": 24.0
-    }
-}
 wandb_version: 1
 
 _wandb:
@@ -2115,45 +1244,6 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
-{
-    "os": "macOS-13.4-arm64-arm-64bit",
-    "python": "3.11.4",
-    "heartbeatAt": "2023-12-19T21:01:55.805963",
-    "startedAt": "2023-12-19T21:01:54.916151",
-    "docker": null,
-    "cuda": null,
-    "args": [
-        "train"
-    ],
-    "state": "running",
-    "program": "/Users/matthew/Projects/agi/src/main.py",
-    "codePathLocal": "src/main.py",
-    "codePath": "src/main.py",
-    "git": {
-        "remote": "https://github.com/ZetiAi/agi.git",
-        "commit": "f8a9c6116a38edbfc3deaecd4918a431c270a8d5"
-    },
-    "email": "matthew@zeti.dev",
-    "root": "/Users/matthew/Projects/agi",
-    "host": "Matthews-MacBook-Air.local",
-    "username": "matthew",
-    "executable": "/Users/matthew/Library/Caches/pypoetry/virtualenvs/agi-gXOjv4jF-py3.11/bin/python",
-    "cpu_count": 8,
-    "cpu_count_logical": 8,
-    "disk": {
-        "/": {
-            "total": 460.4317207336426,
-            "used": 11.017658233642578
-        }
-    },
-    "gpuapple": {
-        "type": "arm",
-        "vendor": "Apple"
-    },
-    "memory": {
-        "total": 24.0
-    }
-}
 wandb_version: 1
 
 _wandb:
@@ -2224,45 +1314,6 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
-{"_wandb": {"runtime": 46}}{
-    "os": "macOS-13.4-arm64-arm-64bit",
-    "python": "3.11.4",
-    "heartbeatAt": "2023-12-19T21:13:54.895094",
-    "startedAt": "2023-12-19T21:13:54.152838",
-    "docker": null,
-    "cuda": null,
-    "args": [
-        "train"
-    ],
-    "state": "running",
-    "program": "/Users/matthew/Projects/agi/src/main.py",
-    "codePathLocal": "src/main.py",
-    "codePath": "src/main.py",
-    "git": {
-        "remote": "https://github.com/ZetiAi/agi.git",
-        "commit": "f8a9c6116a38edbfc3deaecd4918a431c270a8d5"
-    },
-    "email": "matthew@zeti.dev",
-    "root": "/Users/matthew/Projects/agi",
-    "host": "Matthews-MacBook-Air.local",
-    "username": "matthew",
-    "executable": "/Users/matthew/Library/Caches/pypoetry/virtualenvs/agi-gXOjv4jF-py3.11/bin/python",
-    "cpu_count": 8,
-    "cpu_count_logical": 8,
-    "disk": {
-        "/": {
-            "total": 460.4317207336426,
-            "used": 11.017658233642578
-        }
-    },
-    "gpuapple": {
-        "type": "arm",
-        "vendor": "Apple"
-    },
-    "memory": {
-        "total": 24.0
-    }
-}
 wandb_version: 1
 
 _wandb:
@@ -2349,45 +1400,261 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
-{"train_loss_step": 103.46520233154297, "epoch": 0, "trainer/global_step": 321, "_timestamp": 1703021961.106671, "_runtime": 1475.810945034027, "_step": 7, "val_loss": 65.08448791503906, "train_loss_epoch": 81.340576171875, "_wandb": {"runtime": 1475}}{
-    "os": "macOS-13.4-arm64-arm-64bit",
-    "python": "3.11.4",
-    "heartbeatAt": "2023-12-19T21:14:46.115064",
-    "startedAt": "2023-12-19T21:14:45.288983",
-    "docker": null,
-    "cuda": null,
-    "args": [
-        "train"
-    ],
-    "state": "running",
-    "program": "/Users/matthew/Projects/agi/src/main.py",
-    "codePathLocal": "src/main.py",
-    "codePath": "src/main.py",
-    "git": {
-        "remote": "https://github.com/ZetiAi/agi.git",
-        "commit": "f8a9c6116a38edbfc3deaecd4918a431c270a8d5"
-    },
-    "email": "matthew@zeti.dev",
-    "root": "/Users/matthew/Projects/agi",
-    "host": "Matthews-MacBook-Air.local",
-    "username": "matthew",
-    "executable": "/Users/matthew/Library/Caches/pypoetry/virtualenvs/agi-gXOjv4jF-py3.11/bin/python",
-    "cpu_count": 8,
-    "cpu_count_logical": 8,
-    "disk": {
-        "/": {
-            "total": 460.4317207336426,
-            "used": 11.017658233642578
+# encode.py
+import os
+import json
+import tiktoken
+from gcs_utils import download_blob, upload_blob, list_blobs
+
+def restructure_data(all_text, context_window):
+    """
+    Restructure data into chunks of a specified context window.
+    """
+    chunks = [all_text[i:i+context_window] for i in range(0, len(all_text), context_window)]
+    structured_data = []
+    for idx, chunk in enumerate(chunks, start=1):
+        json_obj = {
+            "id": idx,
+            "text": chunk.strip(),
+            "length": len(chunk.split()),  # Number of words in the chunk
+            "ended": idx == len(chunks)  # True if it's the last chunk
         }
-    },
-    "gpuapple": {
-        "type": "arm",
-        "vendor": "Apple"
-    },
-    "memory": {
-        "total": 24.0
-    }
-}
+        structured_data.append(json_obj)
+    return structured_data
+
+def encode_data(bucket_name, source_blob_name, destination_folder, context_window=1024, val_ratio=0.1):
+    """
+    Downloads data from GCS, encodes it, and uploads the processed data back to GCS.
+    """
+    local_raw_file = "raw_data.txt"
+    download_blob(bucket_name, source_blob_name, local_raw_file)
+    
+    # Read and restructure data
+    with open(local_raw_file, 'r', encoding='utf-8') as file:
+        all_text = file.read()
+    structured_data = restructure_data(all_text, context_window)
+    
+    # Write structured data to a temporary local file
+    structured_file = "structured_data.jsonl"
+    with open(structured_file, 'w', encoding='utf-8') as file:
+        for item in structured_data:
+            file.write(json.dumps(item) + '\n')
+    
+    # Encode the structured data
+    encoder = tiktoken.encoding_for_model("gpt2")
+    encoded_file = "encoded_data.txt"
+    with open(structured_file, 'r', encoding='utf-8') as infile, open(encoded_file, 'w', encoding='utf-8') as outfile:
+        for line in infile:
+            data = json.loads(line)
+            tokens = encoder.encode(data['text'])
+            token_str = ' '.join(map(str, tokens))
+            outfile.write(token_str + '\n')
+    
+    # Split into training and validation sets
+    train_file = "training_data.txt"
+    val_file = "validation_data.txt"
+    with open(encoded_file, 'r', encoding='utf-8') as infile:
+        tokens = infile.readlines()
+    val_size = int(len(tokens) * val_ratio)
+    train_tokens = tokens[:-val_size]
+    val_tokens = tokens[-val_size:]
+    with open(train_file, 'w', encoding='utf-8') as outfile:
+        outfile.writelines(train_tokens)
+    with open(val_file, 'w', encoding='utf-8') as outfile:
+        outfile.writelines(val_tokens)
+    
+    # Upload processed data back to GCS
+    upload_blob(bucket_name, train_file, f"{destination_folder}/training_data.txt")
+    upload_blob(bucket_name, val_file, f"{destination_folder}/validation_data.txt")
+    print("Encoding and uploading complete.")
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Process and encode data from GCS.')
+    parser.add_argument('--bucket', type=str, required=True, help='Name of the GCS bucket.')
+    parser.add_argument('--source_blob', type=str, required=True, help='GCS path to the source raw data file.')
+    parser.add_argument('--destination_folder', type=str, default='agi/experiments/', help='GCS folder to upload processed data.')
+    parser.add_argument('--context_window', type=int, default=1024, help='Context window size for data restructuring.')
+    parser.add_argument('--val_ratio', type=float, default=0.1, help='Validation data ratio.')
+    
+    args = parser.parse_args()
+    encode_data(args.bucket, args.source_blob, args.destination_folder, args.context_window, args.val_ratio)
+# util.py
+import random
+import math
+import torch
+from dataset import TokenizedTextDataset  
+
+# Initalize with sinusoidal positional encoding but still learnable 
+def sinusoidal_positional_encoding(embed_size, max_len):
+    pe = torch.zeros(max_len, embed_size)
+    position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+    div_term = torch.exp(torch.arange(0, embed_size, 2).float() * (-math.log(10000.0) / embed_size))
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)
+    return pe.unsqueeze(0)
+
+
+def find_sequence_length():
+    # Load the dataset
+    train_dataset = TokenizedTextDataset('data/training_data.txt')
+
+    # Ensure the sample size is not larger than the dataset size
+    sample_size = min(10000, len(train_dataset))  # Adjust this value based on your needs
+
+    # Sample a subset of the dataset
+    samples = random.sample(list(train_dataset), sample_size)
+
+    # Print out a few samples
+    for i in range(5):
+        print(samples[i])
+
+    # Compute the maximum length of the samples
+    max_len = max(max(tensor.shape[0] for tensor in sample) for sample in samples)
+    print("Max Length", max_len)
+
+#if __name__ == "__main__":
+   # find_sequence_length()# predict.py
+import torch
+import torch.nn.functional as F
+from torch.distributions import Categorical
+import tiktoken
+from gcs_utils import download_blob
+from model import GPTModel
+import yaml
+import os
+from gcs_utils import download_blob, upload_blob
+
+def get_latest_checkpoint(bucket_name, experiments_folder):
+    checkpoint_dir = f"{experiments_folder}/checkpoints/"
+    blobs = list_blobs(bucket_name, prefix=checkpoint_dir)
+    checkpoint_files = [blob.name for blob in blobs if blob.name.endswith('.pth')]
+
+    if not checkpoint_files:
+        raise Exception("No checkpoint files found in the specified directory.")
+
+    # Assuming checkpoints are named with step numbers or timestamps
+    latest_checkpoint = sorted(checkpoint_files, reverse=True)[0]
+    local_checkpoint = "latest_model.pth"
+    download_blob(bucket_name, latest_checkpoint, local_checkpoint)
+    return local_checkpoint
+
+def read_hparams(bucket_name, experiments_folder, model_version=None):
+    if model_version:
+        hparams_blob = f"{experiments_folder}/version_{model_version}/hparams.yaml"
+    else:
+        # Fetch the latest version
+        versions = [d.name for d in list_blobs(bucket_name, prefix=f"{experiments_folder}/version_") if d.name.endswith('hparams.yaml')]
+        if not versions:
+            raise Exception("No hparams.yaml files found.")
+        hparams_blob = sorted(versions, reverse=True)[0]
+    
+    local_hparams = "hparams.yaml"
+    download_blob(bucket_name, hparams_blob, local_hparams)
+    with open(local_hparams, 'r') as file:
+        hparams = yaml.safe_load(file)
+    return hparams
+
+def load_model(bucket_name, experiments_folder, model_version=None):
+    # Load hyperparameters
+    hparams = read_hparams(bucket_name, experiments_folder, model_version)
+    
+    # Initialize the model
+    model = GPTModel(
+        embed_size=hparams['embed_size'],
+        num_layers=hparams['num_layers'],
+        heads=hparams['heads'],
+        forward_expansion=hparams['forward_expansion'],
+        dropout_rate=hparams['dropout_rate'],
+        batch_size=hparams['batch_size'],
+        vocab_size=hparams['vocab_size'],
+        sequence_length=hparams['sequence_length'],
+        max_epochs=hparams['max_epochs'],
+        training_file_path=hparams['training_file_path'],
+        validation_file_path=hparams['validation_file_path']
+    )
+    
+    # Load the latest checkpoint
+    checkpoint_path = get_latest_checkpoint(bucket_name, experiments_folder)
+    checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
+    model.load_state_dict(checkpoint['state_dict'])
+    model.eval()
+    
+    return model, hparams
+
+def top_p_filtering(logits, top_p=0.9, filter_value=-float('Inf')):
+    """ Filter a distribution of logits using nucleus (top-p) sampling """
+    sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+
+    # Remove tokens with cumulative probability above the threshold (nucleus)
+    sorted_indices_to_remove = cumulative_probs > top_p
+    # Shift the indices to the right to keep the first token above the threshold
+    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+    sorted_indices_to_remove[..., 0] = 0
+
+    indices_to_remove = sorted_indices[sorted_indices_to_remove]
+    logits[indices_to_remove] = filter_value
+    return logits
+
+def generate_text(input_text, tokenizer, model, sequence_length=128, temperature=1.0, top_p=0.9):
+    if not input_text.strip():
+        raise ValueError("Input text is empty")
+
+    # Tokenize the input text
+    input_ids = tokenizer.encode(input_text)
+
+    if not input_ids:
+        raise ValueError("Input text could not be tokenized")
+
+    # Convert to tensor and add batch dimension
+    input_ids = torch.tensor([input_ids], dtype=torch.long)
+
+    print(f"Encoded input ids: {input_ids}")  # Debug print
+
+    # Generate text
+    with torch.no_grad():
+        for _ in range(sequence_length):
+            outputs = model(input_ids)
+            logits = outputs[0, -1, :] / temperature  # Select the logits for the last word in the sequence
+            filtered_logits = top_p_filtering(logits, top_p=top_p)
+
+            # Sample from the filtered distribution
+            probabilities = F.softmax(filtered_logits, dim=-1)
+            next_token_id = Categorical(probabilities).sample()
+
+            # Stop generating if end-of-sequence token is produced
+            if next_token_id.item() == tokenizer.eot_token:
+                print("End of sequence token reached.")  # Debug print
+                break
+
+            # Add batch dimension to make it a 2D tensor
+            next_token_id = next_token_id.unsqueeze(0).unsqueeze(0)  # Add two dimensions to make it a 2D tensor
+            input_ids = torch.cat((input_ids, next_token_id), dim=-1)
+
+    generated_text = tokenizer.decode(input_ids[0].tolist())
+    print(f"Generated text: {generated_text}")  # Debug print
+    return generated_text
+
+def predict_model(input_text, bucket_name, experiments_folder, model_version=None):
+    tokenizer = tiktoken.encoding_for_model("gpt2")  # Ensure this matches your model's vocabulary
+
+    # Load model
+    model, hparams = load_model(bucket_name, experiments_folder, model_version)
+    sequence_length = hparams.get('sequence_length', 128)
+
+    # Generate text using the trained model
+    generated_text = generate_text(input_text, tokenizer, model, sequence_length=sequence_length)
+    
+    # Optionally, upload the generated text to GCS
+    output_blob = f"{experiments_folder}/experiments_generated_text.txt"
+    with open("generated_text.txt", "w", encoding='utf-8') as f:
+        f.write(generated_text)
+    upload_blob(bucket_name, "generated_text.txt", output_blob)
+    
+    return generated_text
+# encode.py
 import os
 import json
 import tiktoken
@@ -2476,157 +1743,7 @@ def find_vocab_size(file_path):
 # Example usage:
 # encode_file('data/raw_data.txt', val_ratio=0.1, context_window=1024)
 #vocab_size = find_vocab_size('data/svelte_docs/training_data.txt')
-#print("Vocabulary Size:", vocab_size)import random
-import math
-import torch
-from dataset import TokenizedTextDataset  
-
-# Initalize with sinusoidal positional encoding but still learnable 
-def sinusoidal_positional_encoding(embed_size, max_len):
-    pe = torch.zeros(max_len, embed_size)
-    position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-    div_term = torch.exp(torch.arange(0, embed_size, 2).float() * (-math.log(10000.0) / embed_size))
-    pe[:, 0::2] = torch.sin(position * div_term)
-    pe[:, 1::2] = torch.cos(position * div_term)
-    return pe.unsqueeze(0)
-
-
-def find_sequence_length():
-    # Load the dataset
-    train_dataset = TokenizedTextDataset('data/training_data.txt')
-
-    # Ensure the sample size is not larger than the dataset size
-    sample_size = min(10000, len(train_dataset))  # Adjust this value based on your needs
-
-    # Sample a subset of the dataset
-    samples = random.sample(list(train_dataset), sample_size)
-
-    # Print out a few samples
-    for i in range(5):
-        print(samples[i])
-
-    # Compute the maximum length of the samples
-    max_len = max(max(tensor.shape[0] for tensor in sample) for sample in samples)
-    print("Max Length", max_len)
-
-#if __name__ == "__main__":
-   # find_sequence_length()import torch
-import torch.nn.functional as F
-from torch.distributions import Categorical
-from model import GPTModel
-import tiktoken
-import argparse
-import os
-import yaml  
-
-def get_latest_checkpoint(version):
-    checkpoint_dir = f'tb_logs/gpt/version_{version}/checkpoints/'
-    checkpoint_files = os.listdir(checkpoint_dir)
-    latest_checkpoint = os.path.join(checkpoint_dir, checkpoint_files[0])
-    return latest_checkpoint
-
-def read_hparams(version):
-    hparams_path = f'tb_logs/gpt/version_{version}/hparams.yaml'
-    with open(hparams_path) as file:
-        hparams = yaml.safe_load(file)
-    return hparams
-
-def predict_model(input_text, model_version=None):
-    tokenizer = tiktoken.encoding_for_model("gpt2")  # Ensure this matches your model's vocabulary
-
-    # Use the latest version if no specific version is provided
-    if model_version is None:
-        versions = [d for d in os.listdir('tb_logs/gpt') if d.startswith('version_')]
-        if versions:
-            versions.sort(key=lambda v: int(v.split('_')[1]), reverse=True)
-            model_version = versions[0].split('_')[1]
-        else:
-            raise Exception("No model versions found.")
-    else:
-        # Explicitly use version 12
-        model_version = '12'  # Hardcoded to version 12 for testing
-
-    print(f'Using model version {model_version}')
-    hparams = read_hparams(model_version)
-    model = GPTModel(
-        embed_size=hparams['embed_size'],
-        num_layers=hparams['num_layers'],
-        heads=hparams['heads'],
-        forward_expansion=hparams['forward_expansion'],
-        dropout_rate=hparams['dropout_rate'],
-        batch_size=hparams['batch_size'],
-        vocab_size=hparams['vocab_size'],
-        sequence_length=hparams['sequence_length'],
-        max_epochs=hparams['max_epochs'],
-        training_file_path=hparams['training_file_path'],
-        validation_file_path=hparams['validation_file_path']
-    )
-
-    checkpoint_path = get_latest_checkpoint(model_version)
-    checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
-    model.load_state_dict(checkpoint['state_dict'])
-    model.eval()
-
-    # Generate text using the trained model
-    generated_text = generate_text(input_text, tokenizer, model)
-    return generated_text
-
-def top_p_filtering(logits, top_p=0.9, filter_value=-float('Inf')):
-    """ Filter a distribution of logits using nucleus (top-p) sampling """
-    assert logits.dim() == 1  # batch size 1 for single word generation
-    sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-
-    # Remove tokens with cumulative probability above the threshold (nucleus)
-    sorted_indices_to_remove = cumulative_probs > top_p
-    # Shift the indices to the right to keep the first token above the threshold
-    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-    sorted_indices_to_remove[..., 0] = 0
-
-    indices_to_remove = sorted_indices[sorted_indices_to_remove]
-    logits[indices_to_remove] = filter_value
-    return logits
-
-def generate_text(input_text, tokenizer, model, temperature=1.0, top_p=0.9):
-    if not input_text.strip():
-        raise ValueError("Input text is empty")
-
-    # Tokenize the input text
-    input_ids = tokenizer.encode(input_text)
-
-    if not input_ids:
-        raise ValueError("Input text could not be tokenized")
-
-    # Convert to tensor and add batch dimension
-    input_ids = torch.tensor([input_ids], dtype=torch.long)
-
-    print(f"Encoded input ids: {input_ids}")  # Debug print
-
-    # Generate text
-    model.eval()
-    with torch.no_grad():
-        for i in range(model.sequence_length):
-            outputs = model(input_ids)
-            logits = outputs[0, -1, :] / temperature  # Select the logits for the last word in the sequence
-            filtered_logits = top_p_filtering(logits, top_p=top_p)
-
-            # Sample from the filtered distribution
-            probabilities = F.softmax(filtered_logits, dim=-1)
-            next_token_id = Categorical(probabilities).sample()
-
-            # Stop generating if end-of-sequence token is produced
-            if next_token_id.item() == tokenizer.eot_token:
-                print("End of sequence token reached.")  # Debug print
-                break
-
-            # Add batch dimension to make it a 2D tensor
-            next_token_id = next_token_id.unsqueeze(0).unsqueeze(0)  # Add two dimensions to make it a 2D tensor
-            input_ids = torch.cat((input_ids, next_token_id), dim=-1)
-
-    generated_text = tokenizer.decode(input_ids[0].tolist())
-    print(f"Generated text: {generated_text}")  # Debug print
-    return generated_text
-
+#print("Vocabulary Size:", vocab_size)# model.py
 import torch
 import lightning as L
 import torch.nn as nn
@@ -2675,10 +1792,8 @@ class GPTModel(L.LightningModule):
         x = x.transpose(0, 1)
 
         # Adjust the mask for multi-head attention
-        if mask is not None:
-            mask = self.create_mask(current_seq_length).to(x.device)
-        else:
-            print("Mask is None")
+        causal_mask = self.create_causal_mask(current_seq_length)
+        mask = mask.unsqueeze(1) | causal_mask
 
         for layer in self.layers:
             x = layer(x, mask=mask)  # Pass the mask to each layer
@@ -2687,8 +1802,8 @@ class GPTModel(L.LightningModule):
 
         return x
     
-    def create_mask(self, size):
-        mask = torch.triu(torch.full((size, size), float('-inf')), diagonal=1)
+    def create_causal_mask(self, size):
+        mask = torch.triu(torch.ones(size, size, device=x.device), diagonal=1).bool()
         return mask
 
         
@@ -2761,10 +1876,13 @@ class WarmupCosineLR(torch.optim.lr_scheduler._LRScheduler):
         return self.optimizer.param_groups[0]['params'][0].device
 
 
+# dataset.py
 import torch
 import lightning as L
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
+import os
+from gcs_utils import download_blob
 
 # Collate function outside the dataset class
 def collate_fn(batch):
@@ -2829,28 +1947,50 @@ class TokenizedTextDataset(Dataset):
 
         return input_sequence, target_sequence, attention_mask
 
-
-
 class GPTDataModule(L.LightningDataModule):
-    def __init__(self, train_file, val_file, batch_size=32, sequence_length=128):
+    def __init__(self, train_blob_name, val_blob_name, bucket_name, batch_size=32, sequence_length=128, local_data_dir='temp_data'):
         super().__init__()
-        self.train_file = train_file
-        self.val_file = val_file
+        self.train_blob_name = train_blob_name
+        self.val_blob_name = val_blob_name
+        self.bucket_name = bucket_name
         self.batch_size = batch_size
-        self.seq_length = sequence_length
+        self.sequence_length = sequence_length
+        self.local_data_dir = local_data_dir
 
     def setup(self, stage=None):
-        # Create instances of the TokenizedTextDataset for training and validation
-        if stage == 'fit' or stage is None:
-            self.train_dataset = TokenizedTextDataset(self.train_file, self.seq_length)
-            self.val_dataset = TokenizedTextDataset(self.val_file, self.seq_length)
+        """
+        Downloads the training and validation data from GCS to a local directory.
+        """
+        if not os.path.exists(self.local_data_dir):
+            os.makedirs(self.local_data_dir)
+
+        # Download training data
+        self.train_file = os.path.join(self.local_data_dir, os.path.basename(self.train_blob_name))
+        download_blob(self.bucket_name, self.train_blob_name, self.train_file)
+
+        # Download validation data
+        self.val_file = os.path.join(self.local_data_dir, os.path.basename(self.val_blob_name))
+        download_blob(self.bucket_name, self.val_blob_name, self.val_file)
+
+        # Create dataset instances
+        self.train_dataset = TokenizedTextDataset(self.train_file, self.sequence_length)
+        self.val_dataset = TokenizedTextDataset(self.val_file, self.sequence_length)
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=collate_fn, pin_memory=True)
 
     def val_dataloader(self):
         return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True)
+
+    def teardown(self, stage=None):
+        """
+        Cleans up the local data directory after training/testing.
+        """
+        if os.path.exists(self.local_data_dir):
+            import shutil
+            shutil.rmtree(self.local_data_dir)
 # main.py
+import os
 import argparse
 import torch
 import wandb
@@ -2858,13 +1998,16 @@ import wandb
 from encode import encode_text_file, encode_jsonl_file, restructure_data
 from model import GPTModel
 from predict import predict_model
-from dataset import GPTDataModule  # Make sure to import your GPTDataModule
+from dataset import GPTDataModule  # Import the updated GPTDataModule
 
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 from pytorch_lightning.loggers import WandbLogger
 
-def train_model():
+# Assuming the key is in the project root directory
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "zeti-nube-dev-key.json"
+
+def train_model(bucket_name, train_blob_name, val_blob_name):
     # Initialize model
     model = GPTModel(
         embed_size=768, 
@@ -2876,39 +2019,45 @@ def train_model():
         batch_size=32,
         sequence_length=1024, 
         max_epochs=10,
-        training_file_path='data/svelte_docs/training_data.txt',
-        validation_file_path='data/svelte_docs/validation_data.txt'
+        training_file_path='',  # Not needed as data is handled by DataModule
+        validation_file_path=''  # Not needed as data is handled by DataModule
     )
 
     print("Model Hyperparameters")
     print(model.hparams)  # Print the model's hyperparameters
 
     # Initialize your data module
-    data_module = GPTDataModule(batch_size=model.batch_size, sequence_length=model.sequence_length, train_file=model.training_file_path, val_file=model.validation_file_path)
+    data_module = GPTDataModule(
+        bucket_name=bucket_name,
+        train_blob_name=train_blob_name,  # e.g., 'agi/svelte_docs/training_data.txt'
+        val_blob_name=val_blob_name,      # e.g., 'agi/svelte_docs/validation_data.txt'
+        batch_size=model.batch_size,
+        sequence_length=model.sequence_length
+    )
 
     # Initialize the TensorBoard logger
     tb_logger = TensorBoardLogger("tb_logs", name="gpt", log_graph=True)
-    # initialise the wandb logger and name your wandb project
+    # Initialize the WandB logger and name your WandB project
     wandb_logger = WandbLogger(project='gpt')
 
-    # add your batch size to the wandb config
+    # Add your batch size to the WandB config
     wandb_logger.experiment.config["batch_size"] = model.batch_size
     torch.set_float32_matmul_precision('medium')  # Enable mixed precision training
 
     trainer = Trainer(
         max_epochs=model.max_epochs,
         logger=[tb_logger, wandb_logger],
-        devices = torch.cuda.device_count() if torch.cuda.is_available() else 1,
+        devices=torch.cuda.device_count() if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
-        precision='16-mixed'  # Add this line to enable 16-bit precision mixed precision (AMP)
-        #limit_train_batches=0.1,  # Limit the training data to 10% of the training set
-        #limit_val_batches=0.1,  # Limit the validation data to 10% of the validation set
+        precision='16-mixed'  # Enable 16-bit precision mixed precision (AMP)
+        #limit_train_batches=0.1,  # Uncomment to limit training data to 10%
+        #limit_val_batches=0.1,    # Uncomment to limit validation data to 10%
     )
 
     # Train the model with AMP
-    trainer.fit(model, data_module)
+    trainer.fit(model, datamodule=data_module)
     tb_logger.save()  # Save the TensorBoard logs
-    wandb.finish()  # Finish the W&B run
+    wandb.finish()     # Finish the W&B run
 
     # Optionally save the final model
     torch.save(model.state_dict(), 'final_model.pth')
@@ -2918,16 +2067,19 @@ def main(args):
         input_file = args.input_file if args.input_file else 'data/svelte_docs/raw_data.txt'
         encode_text_file(input_file)
         print(f"Encoded Tokens written")
-    elif args.command == 'restucture':
+    elif args.command == 'restructure':
         input_file = args.input_file if args.input_file else 'data/svelte_docs/raw_data.txt'
         restructure_data(input_file, 'data/svelte_docs/structured_data.txt', 128)
-        print(f"Encoded Tokens written")
+        print(f"Structured data written")
     elif args.command == 'encode_json':
         input_file = args.input_file if args.input_file else 'data/web_text/small-117M.valid.jsonl'
         encode_jsonl_file(input_file)
-        print(f"Encoded Tokens written")
+        print(f"Encoded JSONL Tokens written")
     elif args.command == 'train':
-        train_model()
+        bucket_name = 'zdresearch'  # Your bucket name
+        train_blob = 'agi/svelte_docs/training_data.txt'
+        val_blob = 'agi/svelte_docs/validation_data.txt'
+        train_model(bucket_name, train_blob, val_blob)
         print("Training Complete")
     elif args.command == 'predict':
         input_text = "What is Svelte?"
@@ -2947,7 +2099,7 @@ if __name__ == "__main__":
     parser_train = subparsers.add_parser('train', help='Train the GPT model')
 
     # Add predict command
-    predict_parser = subparsers.add_parser('predict', help='predict output for a given input text')
+    predict_parser = subparsers.add_parser('predict', help='Predict output for a given input text')
 
     # Subparser for restructuring
     parser_restructure = subparsers.add_parser('restructure', help='Restructure raw text data into structured format')
@@ -2959,7 +2111,9 @@ if __name__ == "__main__":
 
     # Parse the arguments and call the main function
     args = parser.parse_args()
-    main(args)import torch
+    main(args)
+# layers.py
+import torch
 import math
 import torch.nn as nn
 
@@ -2983,3 +2137,170 @@ class GPTTransformerBlock(nn.Module):
         out = self.norm2(self.dropout(forward_output) + x)  # Apply dropout after feed-forward network
 
         return out
+# gcs_utils.py
+import os
+from google.cloud import storage
+from google.api_core.exceptions import GoogleAPIError
+
+def initialize_storage_client():
+    """
+    Initializes and returns a Google Cloud Storage client.
+    """
+    try:
+        client = storage.Client()
+        return client
+    except Exception as e:
+        print(f"Error initializing Google Cloud Storage client: {e}")
+        raise e
+
+def download_blob(bucket_name, source_blob_name, destination_file_name):
+    """
+    Downloads a blob from the bucket.
+    """
+    client = initialize_storage_client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(source_blob_name)
+    try:
+        blob.download_to_filename(destination_file_name)
+        print(f"Downloaded {source_blob_name} to {destination_file_name}.")
+    except GoogleAPIError as e:
+        print(f"Error downloading blob: {e}")
+        raise e
+
+def upload_blob(bucket_name, source_file_name, destination_blob_name):
+    """
+    Uploads a file to the bucket.
+    """
+    client = initialize_storage_client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(destination_blob_name)
+    try:
+        blob.upload_from_filename(source_file_name)
+        print(f"Uploaded {source_file_name} to gs://{bucket_name}/{destination_blob_name}.")
+    except GoogleAPIError as e:
+        print(f"Error uploading blob: {e}")
+        raise e
+
+def list_blobs(bucket_name, prefix=None):
+    """
+    Lists all blobs in the bucket with an optional prefix.
+    """
+    client = initialize_storage_client()
+    bucket = client.bucket(bucket_name)
+    blobs = bucket.list_blobs(prefix=prefix)
+    return blobs
+<a href="https://colab.research.google.com/github/ZetiAi/agi/blob/master/agi.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+Begin!
+import time
+
+from datetime import datetime
+
+start_time = time.time()  # Start time
+
+current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Current time in readable format
+
+print(f"Run begins at {current_time}")
+Download & Install Python 3.11
+!sudo apt-get update
+
+!sudo apt-get install -y make build-essential binfmt-support
+
+!sudo add-apt-repository ppa:deadsnakes/ppa -y
+
+!sudo apt install python3.11 -y
+
+!python3.11 --version
+Clone the Repo & Create Path to Directory
+import getpass
+
+import subprocess
+
+import os
+
+
+
+# Step 1: Prompt the user for their GitHub PAT securely
+
+pat = getpass.getpass("Enter your GitHub Personal Access Token (PAT): ")
+
+
+
+# Step 2: Construct the clone URL using the PAT
+
+clone_url = f"https://{pat}@github.com/ZetiAi/agi.git"
+
+
+
+# Step 3: Clone the repository without printing the PAT
+
+# Suppress the output to ensure the PAT isn't logged
+
+result = subprocess.run(
+
+    ["git", "clone", clone_url],
+
+    stdout=subprocess.PIPE,
+
+    stderr=subprocess.PIPE,
+
+    text=True
+
+)
+
+
+
+# Optional: Check if the clone was successful
+
+if result.returncode == 0:
+
+    print("Repository cloned successfully.")
+
+else:
+
+    print("Error cloning repository:")
+
+    print(result.stderr)
+
+
+
+# Step 4: Change directory to the cloned repository
+
+%cd agi
+
+
+
+# Step 5: Remove the PAT from the environment to prevent accidental exposure
+
+del pat
+
+del clone_url
+Install Poetry
+
+!sudo apt update
+
+!sudo apt install pipx
+
+!pipx ensurepath
+
+!pipx install poetry
+Train the Model
+!/root/.local/bin/poetry env use 3.11
+!/root/.local/bin/poetry install --no-root
+!nvidia-smi
+%reload_ext tensorboard
+
+%tensorboard --logdir=/content/agi/tb_logs/ --port 6013
+import time
+
+setup_time = time.time() - start_time
+
+print(f"Setup time: {setup_time:.2f} seconds ({setup_time / 60:.2f} minutes)")
+
+training_start_time = time.time()
+
+!/root/.local/bin/poetry run python src/main.py train
+
+training_time = time.time() - training_start_time
+
+print(f"Training time: {training_time:.2f} seconds ({training_time / 60:.2f} minutes)")
+!/root/.local/bin/poetry run python src/main.py predict

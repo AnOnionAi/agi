@@ -172,3 +172,6 @@ tb_logs/
 *.ckpt.*
 wandb/
 data/
+
+# Google Platform Key
+zeti-nube-dev-key.json

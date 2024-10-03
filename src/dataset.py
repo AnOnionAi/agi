@@ -3,6 +3,8 @@ import torch
 import lightning as L
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
+import os
+from gcs_utils import download_blob
 
 # Collate function outside the dataset class
 def collate_fn(batch):
@@ -67,24 +69,45 @@ class TokenizedTextDataset(Dataset):
 
         return input_sequence, target_sequence, attention_mask
 
-
-
 class GPTDataModule(L.LightningDataModule):
-    def __init__(self, train_file, val_file, batch_size=32, sequence_length=128):
+    def __init__(self, train_blob_name, val_blob_name, bucket_name, batch_size=32, sequence_length=128, local_data_dir='temp_data'):
         super().__init__()
-        self.train_file = train_file
-        self.val_file = val_file
+        self.train_blob_name = train_blob_name
+        self.val_blob_name = val_blob_name
+        self.bucket_name = bucket_name
         self.batch_size = batch_size
-        self.seq_length = sequence_length
+        self.sequence_length = sequence_length
+        self.local_data_dir = local_data_dir
 
     def setup(self, stage=None):
-        # Create instances of the TokenizedTextDataset for training and validation
-        if stage == 'fit' or stage is None:
-            self.train_dataset = TokenizedTextDataset(self.train_file, self.seq_length)
-            self.val_dataset = TokenizedTextDataset(self.val_file, self.seq_length)
+        """
+        Downloads the training and validation data from GCS to a local directory.
+        """
+        if not os.path.exists(self.local_data_dir):
+            os.makedirs(self.local_data_dir)
+
+        # Download training data
+        self.train_file = os.path.join(self.local_data_dir, os.path.basename(self.train_blob_name))
+        download_blob(self.bucket_name, self.train_blob_name, self.train_file)
+
+        # Download validation data
+        self.val_file = os.path.join(self.local_data_dir, os.path.basename(self.val_blob_name))
+        download_blob(self.bucket_name, self.val_blob_name, self.val_file)
+
+        # Create dataset instances
+        self.train_dataset = TokenizedTextDataset(self.train_file, self.sequence_length)
+        self.val_dataset = TokenizedTextDataset(self.val_file, self.sequence_length)
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=collate_fn, pin_memory=True)
 
     def val_dataloader(self):
         return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True)
+
+    def teardown(self, stage=None):
+        """
+        Cleans up the local data directory after training/testing.
+        """
+        if os.path.exists(self.local_data_dir):
+            import shutil
+            shutil.rmtree(self.local_data_dir)

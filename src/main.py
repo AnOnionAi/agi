@@ -1,4 +1,5 @@
 # main.py
+import os
 import argparse
 import torch
 import wandb
@@ -6,13 +7,16 @@ import wandb
 from encode import encode_text_file, encode_jsonl_file, restructure_data
 from model import GPTModel
 from predict import predict_model
-from dataset import GPTDataModule  # Make sure to import your GPTDataModule
+from dataset import GPTDataModule  # Import the updated GPTDataModule
 
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 from pytorch_lightning.loggers import WandbLogger
 
-def train_model():
+# Assuming the key is in the project root directory
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "zeti-nube-dev-key.json"
+
+def train_model(bucket_name, train_blob_name, val_blob_name):
     # Initialize model
     model = GPTModel(
         embed_size=768, 
@@ -24,39 +28,45 @@ def train_model():
         batch_size=32,
         sequence_length=1024, 
         max_epochs=10,
-        training_file_path='data/svelte_docs/training_data.txt',
-        validation_file_path='data/svelte_docs/validation_data.txt'
+        training_file_path='',  # Not needed as data is handled by DataModule
+        validation_file_path=''  # Not needed as data is handled by DataModule
     )
 
     print("Model Hyperparameters")
     print(model.hparams)  # Print the model's hyperparameters
 
     # Initialize your data module
-    data_module = GPTDataModule(batch_size=model.batch_size, sequence_length=model.sequence_length, train_file=model.training_file_path, val_file=model.validation_file_path)
+    data_module = GPTDataModule(
+        bucket_name=bucket_name,
+        train_blob_name=train_blob_name,  # e.g., 'agi/svelte_docs/training_data.txt'
+        val_blob_name=val_blob_name,      # e.g., 'agi/svelte_docs/validation_data.txt'
+        batch_size=model.batch_size,
+        sequence_length=model.sequence_length
+    )
 
     # Initialize the TensorBoard logger
     tb_logger = TensorBoardLogger("tb_logs", name="gpt", log_graph=True)
-    # initialise the wandb logger and name your wandb project
+    # Initialize the WandB logger and name your WandB project
     wandb_logger = WandbLogger(project='gpt')
 
-    # add your batch size to the wandb config
+    # Add your batch size to the WandB config
     wandb_logger.experiment.config["batch_size"] = model.batch_size
     torch.set_float32_matmul_precision('medium')  # Enable mixed precision training
 
     trainer = Trainer(
         max_epochs=model.max_epochs,
         logger=[tb_logger, wandb_logger],
-        devices = torch.cuda.device_count() if torch.cuda.is_available() else 1,
+        devices=torch.cuda.device_count() if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
-        precision='16-mixed'  # Add this line to enable 16-bit precision mixed precision (AMP)
-        #limit_train_batches=0.1,  # Limit the training data to 10% of the training set
-        #limit_val_batches=0.1,  # Limit the validation data to 10% of the validation set
+        precision='16-mixed'  # Enable 16-bit precision mixed precision (AMP)
+        #limit_train_batches=0.1,  # Uncomment to limit training data to 10%
+        #limit_val_batches=0.1,    # Uncomment to limit validation data to 10%
     )
 
     # Train the model with AMP
-    trainer.fit(model, data_module)
+    trainer.fit(model, datamodule=data_module)
     tb_logger.save()  # Save the TensorBoard logs
-    wandb.finish()  # Finish the W&B run
+    wandb.finish()     # Finish the W&B run
 
     # Optionally save the final model
     torch.save(model.state_dict(), 'final_model.pth')
@@ -66,16 +76,19 @@ def main(args):
         input_file = args.input_file if args.input_file else 'data/svelte_docs/raw_data.txt'
         encode_text_file(input_file)
         print(f"Encoded Tokens written")
-    elif args.command == 'restucture':
+    elif args.command == 'restructure':
         input_file = args.input_file if args.input_file else 'data/svelte_docs/raw_data.txt'
         restructure_data(input_file, 'data/svelte_docs/structured_data.txt', 128)
-        print(f"Encoded Tokens written")
+        print(f"Structured data written")
     elif args.command == 'encode_json':
         input_file = args.input_file if args.input_file else 'data/web_text/small-117M.valid.jsonl'
         encode_jsonl_file(input_file)
-        print(f"Encoded Tokens written")
+        print(f"Encoded JSONL Tokens written")
     elif args.command == 'train':
-        train_model()
+        bucket_name = 'zdresearch'  # Your bucket name
+        train_blob = 'agi/svelte_docs/training_data.txt'
+        val_blob = 'agi/svelte_docs/validation_data.txt'
+        train_model(bucket_name, train_blob, val_blob)
         print("Training Complete")
     elif args.command == 'predict':
         input_text = "What is Svelte?"
@@ -95,7 +108,7 @@ if __name__ == "__main__":
     parser_train = subparsers.add_parser('train', help='Train the GPT model')
 
     # Add predict command
-    predict_parser = subparsers.add_parser('predict', help='predict output for a given input text')
+    predict_parser = subparsers.add_parser('predict', help='Predict output for a given input text')
 
     # Subparser for restructuring
     parser_restructure = subparsers.add_parser('restructure', help='Restructure raw text data into structured format')
