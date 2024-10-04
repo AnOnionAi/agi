@@ -50,6 +50,7 @@ class GPTModel(L.LightningModule):
         if mask is not None:
             # Adjust the mask dimensions to match the causal mask
             mask = mask.unsqueeze(1).repeat(1, self.heads, 1, 1)
+            mask = mask.bool()
             mask = mask | causal_mask
         else:
             mask = causal_mask

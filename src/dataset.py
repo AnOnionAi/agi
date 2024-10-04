@@ -12,7 +12,9 @@ def collate_fn(batch):
     inputs_padded = pad_sequence(inputs, batch_first=True, padding_value=0)
     targets_padded = pad_sequence(targets, batch_first=True, padding_value=0)
     masks_padded = pad_sequence(masks, batch_first=True, padding_value=0)  # Pad attention masks
-
+    
+    # Ensure masks_padded is boolean
+    masks_padded = masks_padded.bool()
     return inputs_padded, targets_padded, masks_padded
 
 class TokenizedTextDataset(Dataset):
