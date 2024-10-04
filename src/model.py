@@ -47,7 +47,12 @@ class GPTModel(L.LightningModule):
 
         # Adjust the mask for multi-head attention
         causal_mask = self.create_causal_mask(current_seq_length)
-        mask = mask.unsqueeze(1) | causal_mask
+        if mask is not None:
+            # Adjust the mask dimensions to match the causal mask
+            mask = mask.unsqueeze(1).repeat(1, self.heads, 1, 1)
+            mask = mask | causal_mask
+        else:
+            mask = causal_mask
 
         for layer in self.layers:
             x = layer(x, mask=mask)  # Pass the mask to each layer
