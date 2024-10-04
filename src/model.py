@@ -93,7 +93,7 @@ class GPTModel(L.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=0.001, weight_decay=0.01)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-4, weight_decay=0.01)
 
         num_batches_per_epoch = self.dataset_length // self.batch_size
         if self.dataset_length % self.batch_size != 0:

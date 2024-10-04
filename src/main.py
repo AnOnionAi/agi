@@ -42,7 +42,7 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
     model = GPTModel(
         embed_size=768,
         num_layers=12,
-        heads=16,
+        heads=12,
         forward_expansion=4,
         dropout_rate=0.1,
         vocab_size=50233,

@@ -70,7 +70,7 @@ class TokenizedTextDataset(Dataset):
         return input_sequence, target_sequence, attention_mask
 
 class GPTDataModule(L.LightningDataModule):
-    def __init__(self, train_blob_name, val_blob_name, bucket_name, batch_size=32, sequence_length=128, local_data_dir='temp_data'):
+    def __init__(self, train_blob_name, val_blob_name, bucket_name, batch_size=32, sequence_length=1024, local_data_dir='temp_data'):
         super().__init__()
         self.train_blob_name = train_blob_name
         self.val_blob_name = val_blob_name
