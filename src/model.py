@@ -57,8 +57,10 @@ class GPTModel(L.LightningModule):
         return x
     
     def create_causal_mask(self, size):
-        mask = torch.triu(torch.ones(size, size, device=x.device), diagonal=1).bool()
+        device = next(self.parameters()).device  # Get the device from model parameters
+        mask = torch.triu(torch.ones(size, size, device=device), diagonal=1).bool()
         return mask
+
 
         
     def masked_loss(self, outputs, targets, masks):
