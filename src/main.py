@@ -126,6 +126,8 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
     # shutil.rmtree(local_tb_log_dir)
 
 def main(args):
+    bucket_name = 'zdresearch'  # Define your bucket name
+    experiments_folder = 'agi/experiments/'
     if args.command == 'encode':
         input_file = args.input_file if args.input_file else 'data/svelte_docs/raw_data.txt'
         encode_text_file(input_file)
@@ -146,7 +148,8 @@ def main(args):
         print("Training Complete")
     elif args.command == 'predict':
         input_text = "What is Svelte?"
-        predict_model(input_text)
+        predict_model(input_text, bucket_name, experiments_folder)
+
     else:
         print("Invalid command")
 

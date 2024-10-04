@@ -2125,6 +2125,8 @@ import os
 import argparse
 import torch
 import wandb
+import datetime 
+import yaml 
 
 from encode import encode_text_file, encode_jsonl_file, restructure_data
 from model import GPTModel
@@ -2141,6 +2143,10 @@ from pytorch_lightning.loggers import WandbLogger
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "zeti-nube-dev-key.json"
 
 def train_model(bucket_name, train_blob_name, val_blob_name):
+    # Generate a unique timestamped directory name
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    experiment_dir = f'agi/experiments/{timestamp}/'
+
     # Initialize your data module
     data_module = GPTDataModule(
         bucket_name=bucket_name,
@@ -2168,20 +2174,38 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
         dataset_length=dataset_length
     )
 
-    # Initialize the loggers
-    tb_logger = TensorBoardLogger("tb_logs", name="gpt", log_graph=True)
+    # Define local directories with the timestamp
+    local_checkpoint_dir = f'checkpoints/{timestamp}/'
+    local_tb_log_dir = f'tb_logs/{timestamp}/'
+
+    # Ensure the local directories exist
+    os.makedirs(local_checkpoint_dir, exist_ok=True)
+    os.makedirs(local_tb_log_dir, exist_ok=True)
+
+    # **Save hyperparameters to a YAML file**
+    hparams_file = os.path.join(local_checkpoint_dir, 'hparams.yaml')
+    with open(hparams_file, 'w') as f:
+        yaml.dump(model.hparams, f)
+
+    # **Upload hparams file to GCS**
+    gcs_hparams_path = f'{experiment_dir}checkpoints/hparams.yaml'
+    upload_blob(bucket_name, hparams_file, gcs_hparams_path)
+    print(f"Hyperparameters saved to gs://{bucket_name}/{gcs_hparams_path}")
+
+    # Initialize the loggers with the new local directory
+    tb_logger = TensorBoardLogger(local_tb_log_dir, name="gpt", log_graph=True)
     wandb_logger = WandbLogger(project='gpt')
     wandb_logger.experiment.config["batch_size"] = model.batch_size
 
-    # Define the GCS paths
-    gcs_checkpoint_path = 'agi/experiments/checkpoints/'
-    gcs_tb_log_dir = 'agi/experiments/tb_logs/'
+    # Define the GCS paths using the experiment directory
+    gcs_checkpoint_path = f'{experiment_dir}checkpoints/'
+    gcs_tb_log_dir = f'{experiment_dir}tb_logs/'
 
     # Define the custom checkpoint callback
     checkpoint_callback = GCSCheckpointCallback(
         bucket_name=bucket_name,
         gcs_ckpt_path=gcs_checkpoint_path,
-        dirpath='checkpoints/',
+        dirpath=local_checkpoint_dir,
         filename='model-{epoch:02d}-{val_loss:.2f}',
         save_top_k=3,
         monitor='val_loss',
@@ -2191,7 +2215,7 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
     # Define the custom TensorBoard logger callback
     tb_logger_callback = GCSTensorBoardLoggerCallback(
         bucket_name=bucket_name,
-        local_tb_log_dir='tb_logs/',
+        local_tb_log_dir=local_tb_log_dir,
         gcs_tb_log_dir=gcs_tb_log_dir,
         upload_interval=300  # Adjust the interval as needed
     )
@@ -2214,9 +2238,14 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
     # Save and upload the final model (optional)
     local_model_path = 'final_model.pth'
     torch.save(model.state_dict(), local_model_path)
-    gcs_model_path = 'agi/experiments/final_model.pth'
+    gcs_model_path = f'{experiment_dir}final_model.pth'  # Use the experiment directory
     upload_blob(bucket_name, local_model_path, gcs_model_path)
     print(f"Model saved to gs://{bucket_name}/{gcs_model_path}")
+
+    # Optionally, clean up local files
+    # os.remove(local_model_path)
+    # shutil.rmtree(local_checkpoint_dir)
+    # shutil.rmtree(local_tb_log_dir)
 
 def main(args):
     if args.command == 'encode':
