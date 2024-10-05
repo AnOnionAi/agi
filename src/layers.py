@@ -17,9 +17,13 @@ class GPTTransformerBlock(nn.Module):
         )
 
     def forward(self, x, mask=None):
-        attention_output, _ = self.attention(x, x, x, attn_mask=mask)
-        x = self.norm1(self.dropout(attention_output) + x)  # Apply dropout after attention
-        forward_output = self.feed_forward(x)
-        out = self.norm2(self.dropout(forward_output) + x)  # Apply dropout after feed-forward network
 
+        # Reshape attn_mask to [seq_len, seq_len]
+        if attn_mask is not None:
+            attn_mask = attn_mask[0]  # Since it's the same for all batches
+
+        attention_output, _ = self.attention(x, x, x, attn_mask=attn_mask)
+        x = self.norm1(self.dropout(attention_output) + x)
+        forward_output = self.feed_forward(x)
+        out = self.norm2(self.dropout(forward_output) + x)
         return out

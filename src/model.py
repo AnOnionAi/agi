@@ -37,39 +37,42 @@ class GPTModel(L.LightningModule):
         self.output_layer = nn.Linear(embed_size, vocab_size, bias=False)
         self.output_layer.weight = self.embedding.weight
 
-    def forward(self, x, mask=None):
+    def forward(self, x, attention_mask=None):
+        seq_len = x.size()
+        device = x.device
+
         x = self.embedding(x)
-        current_seq_length = x.size(1)
-        x = x + self.pos_embbedings[:, :current_seq_length, :]
-    
-        # Transpose x to have shape (sequence_length, batch_size, embed_size)
-        x = x.transpose(0, 1)
+        x = x + self.pos_embbedings[:, :seq_len, :]
+        x = x.transpose(0, 1)  # Shape: [seq_len, batch_size, embed_size]
 
-         # Create the causal mask
-        causal_mask = self.create_causal_mask(current_seq_length)
+        # Create causal mask
+        causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
 
-        # Assign mask to causal_mask if it's None
-        if mask is None:
-            mask = causal_mask
+        if attention_mask is not None:
+            # attention_mask shape: [batch_size, seq_len]
+            # Expand attention_mask to [batch_size, 1, seq_len]
+            attention_mask = attention_mask.unsqueeze(1).to(device)
+            # Invert attention_mask: 1 for tokens to keep, 0 for padding
+            attention_mask = attention_mask == 0  # True where padding
+
+            # Combine causal mask and attention_mask
+            combined_mask = causal_mask.unsqueeze(0) | attention_mask
         else:
-            # Adjust the mask dimensions to match the causal mask
-            mask = mask.unsqueeze(1).repeat(1, self.heads, 1, 1)
-            mask = mask.bool()
-            mask = mask | causal_mask
+            combined_mask = causal_mask.unsqueeze(0)  # Shape: [1, seq_len, seq_len]
+
+        # combined_mask shape: [batch_size, seq_len, seq_len]
 
         for layer in self.layers:
-            x = layer(x, mask=mask)  # Pass the mask to each layer
+            x = layer(x, combined_mask)
 
         x = self.output_layer(x)
-
+        x = x.transpose(0, 1)  # Shape: [batch_size, seq_len, vocab_size]
         return x
+
     
     def create_causal_mask(self, size):
-        device = next(self.parameters()).device  # Get the device from model parameters
-        mask = torch.triu(torch.ones(size, size, device=device), diagonal=1).bool()
+        mask = torch.triu(torch.ones(size, size), diagonal=1).bool()
         return mask
-
-
         
     def masked_loss(self, outputs, targets, masks):
         # Flatten outputs and targets
