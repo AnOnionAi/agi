@@ -1,4 +1,4 @@
-# main.py
+# main.py - Currently in GPU Configuration
 import os
 import argparse
 import torch
@@ -12,7 +12,7 @@ from predict import predict_model
 from dataset import GPTDataModule  # Import the updated GPTDataModule
 from gcs_utils import upload_blob
 from callbacks import GCSCheckpointCallback, GCSTensorBoardLoggerCallback
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import Callback
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 from pytorch_lightning.loggers import WandbLogger
@@ -22,6 +22,10 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "zeti-nube-dev-key.json"
 
 # Initalize WandB Project For Loggin
 wandb.init(project='agi')
+
+if torch.cuda.is_available():
+    print("CUDA is available!")
+    print(torch.cuda.get_device_name(0), "baby!") 
 
 def train_model(bucket_name, train_blob_name, val_blob_name):
     # Generate a unique timestamped directory name
@@ -33,27 +37,27 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
         bucket_name=bucket_name,
         train_blob_name=train_blob_name,
         val_blob_name=val_blob_name,
-        batch_size=32,
-        sequence_length=1024
+        batch_size=64,
+        sequence_length=512
     )
     data_module.setup()
 
     # Calculate dataset length
     dataset_length = len(data_module.train_dataset)
 
-    # Initialize model with dataset_length
+    # Initialize model with hpparams such as dataset_length
     model = GPTModel(
-        embed_size=768,
-        num_layers=12,
-        heads=12,
-        forward_expansion=4,
+        embed_size=1024,           # Reduced from 768
+        num_layers=24,             # Reduced from 12
+        heads=16,                  # Reduced from 12
+        forward_expansion=8,      # Reduced from 4
         dropout_rate=0.1,
-        vocab_size=50233,
-        batch_size=32,
-        sequence_length=1024,
-        max_epochs=10,
+        vocab_size=50233,         # Optional: Reduced from 50233
+        batch_size=64,             # Reduced from 32
+        sequence_length=512,      # Reduced from 1024
+        max_epochs=10,             # Reduced from 10
         dataset_length=dataset_length
-    )
+)
 
     # Define local directories with the timestamp
     local_checkpoint_dir = f'checkpoints/{timestamp}/'
@@ -101,6 +105,12 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
         upload_interval=300  # Adjust the interval as needed
     )
 
+    # Define a GPU monitoring callback (optional)
+    class GPUStatsCallback(Callback):
+        def on_train_batch_start(self, trainer, pl_module, batch, batch_idx, dataloader_idx):
+            gpu_mem = torch.cuda.memory_allocated() / (1024 ** 3)  # GB
+            print(f"GPU Memory Allocated: {gpu_mem:.2f} GB")
+
     # Initialize the Trainer with the custom callbacks
     trainer = Trainer(
         max_epochs=model.max_epochs,
@@ -108,7 +118,10 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
         devices=torch.cuda.device_count() if torch.cuda.is_available() else 1,
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
         precision='16-mixed',
-        callbacks=[checkpoint_callback, tb_logger_callback]
+        strategy="deepspeed_stage_2",
+        callbacks=[checkpoint_callback, tb_logger_callback, GPUStatsCallback()],
+        log_every_n_steps=50,          # Log every 50 steps
+        enable_progress_bar=True
     )
 
     # Train the model

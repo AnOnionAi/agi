@@ -115,6 +115,78 @@ dictitems:
   num_layers: 12
   sequence_length: 1024
   vocab_size: 50233
+!!python/object/new:lightning.pytorch.utilities.parsing.AttributeDict
+dictitems:
+  batch_size: 32
+  dataset_length: 10281
+  dropout_rate: 0.1
+  embed_size: 768
+  forward_expansion: 4
+  heads: 12
+  max_epochs: 10
+  num_layers: 12
+  sequence_length: 1024
+  vocab_size: 50233
+!!python/object/new:lightning.pytorch.utilities.parsing.AttributeDict
+dictitems:
+  batch_size: 32
+  dataset_length: 10281
+  dropout_rate: 0.1
+  embed_size: 768
+  forward_expansion: 4
+  heads: 12
+  max_epochs: 10
+  num_layers: 12
+  sequence_length: 1024
+  vocab_size: 50233
+!!python/object/new:lightning.pytorch.utilities.parsing.AttributeDict
+dictitems:
+  batch_size: 32
+  dataset_length: 10281
+  dropout_rate: 0.1
+  embed_size: 768
+  forward_expansion: 4
+  heads: 12
+  max_epochs: 10
+  num_layers: 12
+  sequence_length: 1024
+  vocab_size: 50233
+!!python/object/new:lightning.pytorch.utilities.parsing.AttributeDict
+dictitems:
+  batch_size: 32
+  dataset_length: 10281
+  dropout_rate: 0.1
+  embed_size: 768
+  forward_expansion: 4
+  heads: 12
+  max_epochs: 10
+  num_layers: 12
+  sequence_length: 1024
+  vocab_size: 50233
+!!python/object/new:lightning.pytorch.utilities.parsing.AttributeDict
+dictitems:
+  batch_size: 32
+  dataset_length: 10281
+  dropout_rate: 0.1
+  embed_size: 768
+  forward_expansion: 4
+  heads: 12
+  max_epochs: 10
+  num_layers: 12
+  sequence_length: 1024
+  vocab_size: 50233
+!!python/object/new:lightning.pytorch.utilities.parsing.AttributeDict
+dictitems:
+  batch_size: 32
+  dataset_length: 10281
+  dropout_rate: 0.1
+  embed_size: 768
+  forward_expansion: 4
+  heads: 12
+  max_epochs: 10
+  num_layers: 12
+  sequence_length: 1024
+  vocab_size: 50233
 import torch
 
 def create_mask(mask, batch_size, heads, current_seq_length):
@@ -495,6 +567,56 @@ trainable_pos_emb: false
 training_file_path: data/training_data.txt
 validation_file_path: data/validation_data.txt
 vocab_size: 50233
+batch_size: 32
+dataset_length: 10281
+dropout_rate: 0.1
+embed_size: 768
+forward_expansion: 4
+heads: 12
+max_epochs: 10
+num_layers: 12
+sequence_length: 1024
+vocab_size: 50233
+batch_size: 32
+dataset_length: 10281
+dropout_rate: 0.1
+embed_size: 768
+forward_expansion: 4
+heads: 12
+max_epochs: 10
+num_layers: 12
+sequence_length: 1024
+vocab_size: 50233
+batch_size: 32
+dataset_length: 10281
+dropout_rate: 0.1
+embed_size: 768
+forward_expansion: 4
+heads: 12
+max_epochs: 10
+num_layers: 12
+sequence_length: 1024
+vocab_size: 50233
+batch_size: 32
+dataset_length: 10281
+dropout_rate: 0.1
+embed_size: 768
+forward_expansion: 4
+heads: 12
+max_epochs: 10
+num_layers: 12
+sequence_length: 1024
+vocab_size: 50233
+batch_size: 32
+dataset_length: 10281
+dropout_rate: 0.1
+embed_size: 768
+forward_expansion: 4
+heads: 12
+max_epochs: 10
+num_layers: 12
+sequence_length: 1024
+vocab_size: 50233
 wandb_version: 1
 
 _wandb:
@@ -851,6 +973,67 @@ _wandb:
     framework: lightning
     is_jupyter_run: false
     is_kaggle_kernel: false
+    start_time: 1728094112.664047
+    t:
+      1:
+      - 1
+      - 9
+      - 55
+      - 103
+      2:
+      - 1
+      - 9
+      - 55
+      - 103
+      3:
+      - 19
+      - 23
+      4: 3.11.4
+      5: 0.16.1
+      8:
+      - 4
+      - 5
+      13: darwin-arm64
+batch_size:
+  desc: null
+  value: 32
+embed_size:
+  desc: null
+  value: 768
+num_layers:
+  desc: null
+  value: 12
+heads:
+  desc: null
+  value: 12
+forward_expansion:
+  desc: null
+  value: 4
+dropout_rate:
+  desc: null
+  value: 0.1
+vocab_size:
+  desc: null
+  value: 50233
+sequence_length:
+  desc: null
+  value: 1024
+max_epochs:
+  desc: null
+  value: 10
+dataset_length:
+  desc: null
+  value: 10281
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    python_version: 3.11.4
+    cli_version: 0.16.1
+    framework: lightning
+    is_jupyter_run: false
+    is_kaggle_kernel: false
     start_time: 1703042921.65427
     t:
       1:
@@ -990,6 +1173,67 @@ _wandb:
     framework: lightning
     is_jupyter_run: false
     is_kaggle_kernel: false
+    start_time: 1728094409.442144
+    t:
+      1:
+      - 1
+      - 9
+      - 55
+      - 103
+      2:
+      - 1
+      - 9
+      - 55
+      - 103
+      3:
+      - 19
+      - 23
+      4: 3.11.4
+      5: 0.16.1
+      8:
+      - 4
+      - 5
+      13: darwin-arm64
+batch_size:
+  desc: null
+  value: 32
+embed_size:
+  desc: null
+  value: 768
+num_layers:
+  desc: null
+  value: 12
+heads:
+  desc: null
+  value: 12
+forward_expansion:
+  desc: null
+  value: 4
+dropout_rate:
+  desc: null
+  value: 0.1
+vocab_size:
+  desc: null
+  value: 50233
+sequence_length:
+  desc: null
+  value: 1024
+max_epochs:
+  desc: null
+  value: 10
+dataset_length:
+  desc: null
+  value: 10281
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    python_version: 3.11.4
+    cli_version: 0.16.1
+    framework: lightning
+    is_jupyter_run: false
+    is_kaggle_kernel: false
     start_time: 1703019987.47534
     t:
       1:
@@ -1058,6 +1302,67 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    python_version: 3.11.4
+    cli_version: 0.16.1
+    framework: lightning
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1728092885.062036
+    t:
+      1:
+      - 1
+      - 9
+      - 55
+      - 103
+      2:
+      - 1
+      - 9
+      - 55
+      - 103
+      3:
+      - 19
+      - 23
+      4: 3.11.4
+      5: 0.16.1
+      8:
+      - 4
+      - 5
+      13: darwin-arm64
+batch_size:
+  desc: null
+  value: 32
+embed_size:
+  desc: null
+  value: 768
+num_layers:
+  desc: null
+  value: 12
+heads:
+  desc: null
+  value: 12
+forward_expansion:
+  desc: null
+  value: 4
+dropout_rate:
+  desc: null
+  value: 0.1
+vocab_size:
+  desc: null
+  value: 50233
+sequence_length:
+  desc: null
+  value: 1024
+max_epochs:
+  desc: null
+  value: 10
+dataset_length:
+  desc: null
+  value: 10281
 wandb_version: 1
 
 _wandb:
@@ -1395,6 +1700,101 @@ _wandb:
     framework: lightning
     is_jupyter_run: false
     is_kaggle_kernel: false
+    start_time: 1728094736.066908
+    t:
+      1:
+      - 1
+      - 9
+      - 55
+      - 103
+      2:
+      - 1
+      - 9
+      - 55
+      - 103
+      3:
+      - 19
+      - 23
+      4: 3.11.4
+      5: 0.16.1
+      8:
+      - 4
+      - 5
+      13: darwin-arm64
+batch_size:
+  desc: null
+  value: 32
+embed_size:
+  desc: null
+  value: 768
+num_layers:
+  desc: null
+  value: 12
+heads:
+  desc: null
+  value: 12
+forward_expansion:
+  desc: null
+  value: 4
+dropout_rate:
+  desc: null
+  value: 0.1
+vocab_size:
+  desc: null
+  value: 50233
+sequence_length:
+  desc: null
+  value: 1024
+max_epochs:
+  desc: null
+  value: 10
+dataset_length:
+  desc: null
+  value: 10281
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    python_version: 3.11.4
+    cli_version: 0.16.1
+    framework: lightning
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1728092728.351295
+    t:
+      1:
+      - 1
+      - 9
+      - 55
+      - 103
+      2:
+      - 1
+      - 9
+      - 55
+      - 103
+      3:
+      - 19
+      - 23
+      4: 3.11.4
+      5: 0.16.1
+      8:
+      - 4
+      - 5
+      13: darwin-arm64
+batch_size:
+  desc: null
+  value: 32
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    python_version: 3.11.4
+    cli_version: 0.16.1
+    framework: lightning
+    is_jupyter_run: false
+    is_kaggle_kernel: false
     start_time: 1703020485.295726
     t:
       1:
@@ -1471,6 +1871,67 @@ training_file_path:
 validation_file_path:
   desc: null
   value: data/svelte_docs/validation_data.txt
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    python_version: 3.11.4
+    cli_version: 0.16.1
+    framework: lightning
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1728094003.009068
+    t:
+      1:
+      - 1
+      - 9
+      - 55
+      - 103
+      2:
+      - 1
+      - 9
+      - 55
+      - 103
+      3:
+      - 19
+      - 23
+      4: 3.11.4
+      5: 0.16.1
+      8:
+      - 4
+      - 5
+      13: darwin-arm64
+batch_size:
+  desc: null
+  value: 32
+embed_size:
+  desc: null
+  value: 768
+num_layers:
+  desc: null
+  value: 12
+heads:
+  desc: null
+  value: 12
+forward_expansion:
+  desc: null
+  value: 4
+dropout_rate:
+  desc: null
+  value: 0.1
+vocab_size:
+  desc: null
+  value: 50233
+sequence_length:
+  desc: null
+  value: 1024
+max_epochs:
+  desc: null
+  value: 10
+dataset_length:
+  desc: null
+  value: 10281
 # encode.py
 import os
 import json
@@ -1919,7 +2380,7 @@ class GPTModel(L.LightningModule):
         self.output_layer.weight = self.embedding.weight
 
     def forward(self, x, attention_mask=None):
-        seq_len = x.size()
+        seq_len = x.size(1)
         device = x.device
 
         x = self.embedding(x)
@@ -1957,8 +2418,8 @@ class GPTModel(L.LightningModule):
         
     def masked_loss(self, outputs, targets, masks):
         # Flatten outputs and targets
-        outputs_flat = outputs.view(-1, self.vocab_size)
-        targets_flat = targets.view(-1)
+        outputs_flat = outputs.reshape(-1, self.vocab_size)  # Use reshape instead of view
+        targets_flat = targets.reshape(-1)
 
         # Use masks to filter out loss from padding tokens
         mask = masks.view(-1) == 1  # Flatten and convert to boolean mask
@@ -1970,17 +2431,15 @@ class GPTModel(L.LightningModule):
 
     def training_step(self, batch):
         inputs, targets, masks = batch
-        outputs = self(inputs, mask=masks)
+        outputs = self(inputs, attention_mask=masks)
         loss = self.masked_loss(outputs, targets, masks)
-
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
     def validation_step(self, batch):
         inputs, targets, masks = batch
-        outputs = self(inputs, mask=masks)
+        outputs = self(inputs, attention_mask=masks)
         loss = self.masked_loss(outputs, targets, masks)
-
         self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
@@ -2408,13 +2867,13 @@ class GPTTransformerBlock(nn.Module):
             nn.Linear(forward_expansion * embed_size, embed_size)
         )
 
-    def forward(self, x, mask=None):
+    def forward(self, x, attention_mask=None):
+        # Use attention_mask instead of mask
+        if attention_mask is not None:
+            attention_mask = attention_mask[0]
+            attention_mask = attention_mask.to(dtype=torch.bool)
 
-        # Reshape attn_mask to [seq_len, seq_len]
-        if attn_mask is not None:
-            attn_mask = attn_mask[0]  # Since it's the same for all batches
-
-        attention_output, _ = self.attention(x, x, x, attn_mask=attn_mask)
+        attention_output, _ = self.attention(x, x, x, attn_mask=attention_mask)
         x = self.norm1(self.dropout(attention_output) + x)
         forward_output = self.feed_forward(x)
         out = self.norm2(self.dropout(forward_output) + x)

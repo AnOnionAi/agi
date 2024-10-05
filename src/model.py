@@ -47,28 +47,17 @@ class GPTModel(L.LightningModule):
 
         # Create causal mask
         causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
-
+        # Create key padding mask [batch_size, seq_len]
+        key_padding_mask = None
         if attention_mask is not None:
-            # attention_mask shape: [batch_size, seq_len]
-            # Expand attention_mask to [batch_size, 1, seq_len]
-            attention_mask = attention_mask.unsqueeze(1).to(device)
-            # Invert attention_mask: 1 for tokens to keep, 0 for padding
-            attention_mask = attention_mask == 0  # True where padding
-
-            # Combine causal mask and attention_mask
-            combined_mask = causal_mask.unsqueeze(0) | attention_mask
-        else:
-            combined_mask = causal_mask.unsqueeze(0)  # Shape: [1, seq_len, seq_len]
-
-        # combined_mask shape: [batch_size, seq_len, seq_len]
+            key_padding_mask = attention_mask.squeeze(1).to(device) == 0  # Convert to boolean mask
 
         for layer in self.layers:
-            x = layer(x, combined_mask)
+            x = layer(x, attn_mask=causal_mask, key_padding_mask=key_padding_mask)
 
         x = self.output_layer(x)
         x = x.transpose(0, 1)  # Shape: [batch_size, seq_len, vocab_size]
         return x
-
     
     def create_causal_mask(self, size):
         mask = torch.triu(torch.ones(size, size), diagonal=1).bool()
