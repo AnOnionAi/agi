@@ -175,3 +175,6 @@ data/
 
 # Google Platform Key
 zeti-nube-dev-key.json
+
+# Experiments
+checkpoints/
