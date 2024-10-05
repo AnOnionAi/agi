@@ -103,6 +103,18 @@ google-cloud-storage = "^2.18.2"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+!!python/object/new:lightning.pytorch.utilities.parsing.AttributeDict
+dictitems:
+  batch_size: 32
+  dataset_length: 10281
+  dropout_rate: 0.1
+  embed_size: 768
+  forward_expansion: 4
+  heads: 12
+  max_epochs: 10
+  num_layers: 12
+  sequence_length: 1024
+  vocab_size: 50233
 import torch
 
 def create_mask(mask, batch_size, heads, current_seq_length):
@@ -143,6 +155,31 @@ def test_top_p_filtering_50(mock_logits):
     assert torch.is_tensor(filtered_logits), "Output should be a tensor"
     assert torch.any(filtered_logits == -float('Inf')), "Some logits should be set to -Inf with top_p=0.5"
 
+# config.yaml
+model:
+  embed_size: 768
+  num_layers: 12
+  heads: 12
+  forward_expansion: 4
+  dropout_rate: 0.1
+  vocab_size: 50233
+  sequence_length: 1024
+
+training:
+  batch_size: 32
+  max_epochs: 10
+  learning_rate: 0.0001
+  weight_decay: 0.01
+
+data:
+  train_file: data/training_data.txt
+  val_file: data/validation_data.txt
+  context_window: 1024
+  val_ratio: 0.1
+
+gcs:
+  bucket_name: your-bucket-name
+  experiments_folder: agi/experiments/
 Welcome to 'AGI' – our ambitious journey towards creating a scaled-down yet powerful AI model. Inspired by the sophisticated capabilities of GPT-like models, this project focuses on harnessing deep learning, specifically using PyTorch and Transformer architectures, to develop an AI adept in programming language comprehension and generation.
 
 Our mission is to engineer an AI model that can not only understand and write code in multiple programming languages but also explain its reasoning and logic. The immediate scope of our project centers on Python, with plans to expand into other languages as we progress.
@@ -1099,6 +1136,40 @@ _wandb:
     framework: lightning
     is_jupyter_run: false
     is_kaggle_kernel: false
+    start_time: 1728092336.724247
+    t:
+      1:
+      - 1
+      - 9
+      - 55
+      - 103
+      2:
+      - 1
+      - 9
+      - 55
+      - 103
+      3:
+      - 19
+      - 23
+      4: 3.11.4
+      5: 0.16.1
+      8:
+      - 4
+      - 5
+      13: darwin-arm64
+batch_size:
+  desc: null
+  value: 32
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    python_version: 3.11.4
+    cli_version: 0.16.1
+    framework: lightning
+    is_jupyter_run: false
+    is_kaggle_kernel: false
     start_time: 1703023306.755286
     t:
       1:
@@ -1847,37 +1918,42 @@ class GPTModel(L.LightningModule):
         self.output_layer = nn.Linear(embed_size, vocab_size, bias=False)
         self.output_layer.weight = self.embedding.weight
 
-    def forward(self, x, mask=None):
-        x = self.embedding(x)
-        current_seq_length = x.size(1)
-        x = x + self.pos_embbedings[:, :current_seq_length, :]
-    
-        # Transpose x to have shape (sequence_length, batch_size, embed_size)
-        x = x.transpose(0, 1)
+    def forward(self, x, attention_mask=None):
+        seq_len = x.size()
+        device = x.device
 
-        # Adjust the mask for multi-head attention
-        causal_mask = self.create_causal_mask(current_seq_length)
-        if mask is not None:
-            # Adjust the mask dimensions to match the causal mask
-            mask = mask.unsqueeze(1).repeat(1, self.heads, 1, 1)
-            mask = mask.bool()
-            mask = mask | causal_mask
+        x = self.embedding(x)
+        x = x + self.pos_embbedings[:, :seq_len, :]
+        x = x.transpose(0, 1)  # Shape: [seq_len, batch_size, embed_size]
+
+        # Create causal mask
+        causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
+
+        if attention_mask is not None:
+            # attention_mask shape: [batch_size, seq_len]
+            # Expand attention_mask to [batch_size, 1, seq_len]
+            attention_mask = attention_mask.unsqueeze(1).to(device)
+            # Invert attention_mask: 1 for tokens to keep, 0 for padding
+            attention_mask = attention_mask == 0  # True where padding
+
+            # Combine causal mask and attention_mask
+            combined_mask = causal_mask.unsqueeze(0) | attention_mask
         else:
-            mask = causal_mask
+            combined_mask = causal_mask.unsqueeze(0)  # Shape: [1, seq_len, seq_len]
+
+        # combined_mask shape: [batch_size, seq_len, seq_len]
 
         for layer in self.layers:
-            x = layer(x, mask=mask)  # Pass the mask to each layer
+            x = layer(x, combined_mask)
 
         x = self.output_layer(x)
-
+        x = x.transpose(0, 1)  # Shape: [batch_size, seq_len, vocab_size]
         return x
+
     
     def create_causal_mask(self, size):
-        device = next(self.parameters()).device  # Get the device from model parameters
-        mask = torch.triu(torch.ones(size, size, device=device), diagonal=1).bool()
+        mask = torch.triu(torch.ones(size, size), diagonal=1).bool()
         return mask
-
-
         
     def masked_loss(self, outputs, targets, masks):
         # Flatten outputs and targets
@@ -1961,11 +2037,12 @@ def collate_fn(batch):
     inputs, targets, masks = zip(*batch)
     inputs_padded = pad_sequence(inputs, batch_first=True, padding_value=0)
     targets_padded = pad_sequence(targets, batch_first=True, padding_value=0)
-    masks_padded = pad_sequence(masks, batch_first=True, padding_value=0)  # Pad attention masks
-    
-    # Ensure masks_padded is boolean
-    masks_padded = masks_padded.bool()
-    return inputs_padded, targets_padded, masks_padded
+
+    # Create attention masks (1 for actual tokens, 0 for padding)
+    attention_masks = (inputs_padded != 0).long()
+
+    return inputs_padded, targets_padded, attention_masks
+
 
 class TokenizedTextDataset(Dataset):
     def __init__(self, file_path, sequence_length, padding_token=0, in_memory=True):
@@ -2153,7 +2230,7 @@ from pytorch_lightning.loggers import WandbLogger
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "zeti-nube-dev-key.json"
 
 # Initalize WandB Project For Loggin
-wandb.init(project='gpt')
+wandb.init(project='agi')
 
 def train_model(bucket_name, train_blob_name, val_blob_name):
     # Generate a unique timestamped directory name
@@ -2332,13 +2409,16 @@ class GPTTransformerBlock(nn.Module):
         )
 
     def forward(self, x, mask=None):
-        attention_output, _ = self.attention(x, x, x, attn_mask=mask)
-        x = self.norm1(self.dropout(attention_output) + x)  # Apply dropout after attention
-        forward_output = self.feed_forward(x)
-        out = self.norm2(self.dropout(forward_output) + x)  # Apply dropout after feed-forward network
 
-        return out
-# gcs_utils.py
+        # Reshape attn_mask to [seq_len, seq_len]
+        if attn_mask is not None:
+            attn_mask = attn_mask[0]  # Since it's the same for all batches
+
+        attention_output, _ = self.attention(x, x, x, attn_mask=attn_mask)
+        x = self.norm1(self.dropout(attention_output) + x)
+        forward_output = self.feed_forward(x)
+        out = self.norm2(self.dropout(forward_output) + x)
+        return out# gcs_utils.py
 import os
 from google.cloud import storage
 from google.api_core.exceptions import GoogleAPIError
@@ -2494,8 +2574,6 @@ Train the Model
 import time
 
 !export WANDB_MODE=online
-
-!wandb login
 
 setup_time = time.time() - start_time
 

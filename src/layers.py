@@ -16,13 +16,13 @@ class GPTTransformerBlock(nn.Module):
             nn.Linear(forward_expansion * embed_size, embed_size)
         )
 
-    def forward(self, x, mask=None):
+    def forward(self, x, attention_mask=None):
+        # Use attention_mask instead of mask
+        if attention_mask is not None:
+            attention_mask = attention_mask[0]
+            attention_mask = attention_mask.to(dtype=torch.bool)
 
-        # Reshape attn_mask to [seq_len, seq_len]
-        if attn_mask is not None:
-            attn_mask = attn_mask[0]  # Since it's the same for all batches
-
-        attention_output, _ = self.attention(x, x, x, attn_mask=attn_mask)
+        attention_output, _ = self.attention(x, x, x, attn_mask=attention_mask)
         x = self.norm1(self.dropout(attention_output) + x)
         forward_output = self.feed_forward(x)
         out = self.norm2(self.dropout(forward_output) + x)

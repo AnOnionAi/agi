@@ -1,0 +1,25 @@
+# config.yaml
+model:
+  embed_size: 768
+  num_layers: 12
+  heads: 12
+  forward_expansion: 4
+  dropout_rate: 0.1
+  vocab_size: 50233
+  sequence_length: 1024
+
+training:
+  batch_size: 32
+  max_epochs: 10
+  learning_rate: 0.0001
+  weight_decay: 0.01
+
+data:
+  train_file: data/training_data.txt
+  val_file: data/validation_data.txt
+  context_window: 1024
+  val_ratio: 0.1
+
+gcs:
+  bucket_name: your-bucket-name
+  experiments_folder: agi/experiments/

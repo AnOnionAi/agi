@@ -38,7 +38,7 @@ class GPTModel(L.LightningModule):
         self.output_layer.weight = self.embedding.weight
 
     def forward(self, x, attention_mask=None):
-        seq_len = x.size()
+        seq_len = x.size(1)
         device = x.device
 
         x = self.embedding(x)
@@ -76,8 +76,8 @@ class GPTModel(L.LightningModule):
         
     def masked_loss(self, outputs, targets, masks):
         # Flatten outputs and targets
-        outputs_flat = outputs.view(-1, self.vocab_size)
-        targets_flat = targets.view(-1)
+        outputs_flat = outputs.reshape(-1, self.vocab_size)  # Use reshape instead of view
+        targets_flat = targets.reshape(-1)
 
         # Use masks to filter out loss from padding tokens
         mask = masks.view(-1) == 1  # Flatten and convert to boolean mask
@@ -89,17 +89,15 @@ class GPTModel(L.LightningModule):
 
     def training_step(self, batch):
         inputs, targets, masks = batch
-        outputs = self(inputs, mask=masks)
+        outputs = self(inputs, attention_mask=masks)
         loss = self.masked_loss(outputs, targets, masks)
-
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
     def validation_step(self, batch):
         inputs, targets, masks = batch
-        outputs = self(inputs, mask=masks)
+        outputs = self(inputs, attention_mask=masks)
         loss = self.masked_loss(outputs, targets, masks)
-
         self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
