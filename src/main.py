@@ -21,7 +21,7 @@ from pytorch_lightning.loggers import WandbLogger
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "zeti-nube-dev-key.json"
 
 # Initalize WandB Project For Loggin
-wandb.init(project='gpt')
+wandb.init(project='agi')
 
 def train_model(bucket_name, train_blob_name, val_blob_name):
     # Generate a unique timestamped directory name
