@@ -7,7 +7,7 @@ from gcs_utils import download_blob
 from model import GPTModel
 import yaml
 import os
-from gcs_utils import download_blob, upload_blob
+from gcs_utils import download_blob, upload_blob, list_blobs
 
 def get_latest_checkpoint(bucket_name, experiments_folder):
     checkpoint_dir = f"{experiments_folder}/checkpoints/"
