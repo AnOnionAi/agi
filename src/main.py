@@ -19,9 +19,9 @@ from pytorch_lightning.loggers import WandbLogger
 
 # Assuming the key is in the project root directory
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "zeti-nube-dev-key.json"
-
+os.environ['WANDB_MODE'] = 'offline'
 # Initalize WandB Project For Loggin
-wandb.init(project='agi')
+wandb.init(project='agi', mode="offline")
 
 if torch.cuda.is_available():
     print("CUDA is available!")
