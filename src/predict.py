@@ -6,8 +6,12 @@ import tiktoken
 from gcs_utils import download_blob
 from model import GPTModel
 import yaml
-import os
 from gcs_utils import download_blob, upload_blob, list_blobs
+import logging
+from google.cloud import exceptions as gcs_exceptions
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def get_latest_checkpoint(bucket_name, experiments_folder):
     checkpoint_dir = f"{experiments_folder}/checkpoints/"
@@ -24,20 +28,30 @@ def get_latest_checkpoint(bucket_name, experiments_folder):
     return local_checkpoint
 
 def read_hparams(bucket_name, experiments_folder, model_version=None):
-    if model_version:
-        hparams_blob = f"{experiments_folder}/version_{model_version}/hparams.yaml"
-    else:
-        # Fetch the latest version
-        versions = [d.name for d in list_blobs(bucket_name, prefix=f"{experiments_folder}/version_") if d.name.endswith('hparams.yaml')]
-        if not versions:
-            raise Exception("No hparams.yaml files found.")
-        hparams_blob = sorted(versions, reverse=True)[0]
-    
-    local_hparams = "hparams.yaml"
-    download_blob(bucket_name, hparams_blob, local_hparams)
-    with open(local_hparams, 'r') as file:
-        hparams = yaml.safe_load(file)
-    return hparams
+    try: 
+        if model_version:
+            hparams_blob = f"{experiments_folder}/version_{model_version}/hparams.yaml"
+        else:
+            # Fetch the latest version
+            versions = [d.name for d in list_blobs(bucket_name, prefix=f"{experiments_folder}/version_") if d.name.endswith('hparams.yaml')]
+            if not versions:
+                raise Exception("No hparams.yaml files found.")
+            hparams_blob = sorted(versions, reverse=True)[0]
+        
+        local_hparams = "hparams.yaml"
+        download_blob(bucket_name, hparams_blob, local_hparams)
+        with open(local_hparams, 'r') as file:
+            hparams = yaml.safe_load(file)
+        return hparams
+    except gcs_exceptions.NotFound:
+        logger.error(f"Bucket or blob not found: {bucket_name}/{hparams_blob}")
+        raise
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing YAML file: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in read_hparams: {e}")
+        raise
 
 def load_model(bucket_name, experiments_folder, model_version=None):
     # Load hyperparameters
