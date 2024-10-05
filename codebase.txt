@@ -1860,6 +1860,7 @@ class GPTModel(L.LightningModule):
         if mask is not None:
             # Adjust the mask dimensions to match the causal mask
             mask = mask.unsqueeze(1).repeat(1, self.heads, 1, 1)
+            mask = mask.bool()
             mask = mask | causal_mask
         else:
             mask = causal_mask
@@ -1961,7 +1962,9 @@ def collate_fn(batch):
     inputs_padded = pad_sequence(inputs, batch_first=True, padding_value=0)
     targets_padded = pad_sequence(targets, batch_first=True, padding_value=0)
     masks_padded = pad_sequence(masks, batch_first=True, padding_value=0)  # Pad attention masks
-
+    
+    # Ensure masks_padded is boolean
+    masks_padded = masks_padded.bool()
     return inputs_padded, targets_padded, masks_padded
 
 class TokenizedTextDataset(Dataset):
@@ -2148,6 +2151,9 @@ from pytorch_lightning.loggers import WandbLogger
 
 # Assuming the key is in the project root directory
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "zeti-nube-dev-key.json"
+
+# Initalize WandB Project For Loggin
+wandb.init(project='gpt')
 
 def train_model(bucket_name, train_blob_name, val_blob_name):
     # Generate a unique timestamped directory name
@@ -2488,6 +2494,8 @@ Train the Model
 import time
 
 !export WANDB_MODE=online
+
+!wandb login
 
 setup_time = time.time() - start_time
 

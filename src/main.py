@@ -20,6 +20,9 @@ from pytorch_lightning.loggers import WandbLogger
 # Assuming the key is in the project root directory
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "zeti-nube-dev-key.json"
 
+# Initalize WandB Project For Loggin
+wandb.init(project='gpt')
+
 def train_model(bucket_name, train_blob_name, val_blob_name):
     # Generate a unique timestamped directory name
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
