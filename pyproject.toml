@@ -6,7 +6,7 @@ authors = ["Matthew <matthew@zeti.dev>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.10"
 tiktoken = "^0.5.2"
 torch = "^2.1.1"
 argparse = "^1.4.0"
