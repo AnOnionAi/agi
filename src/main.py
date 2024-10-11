@@ -106,9 +106,9 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
     )
 
     # Define a GPU monitoring callback (optional)
-    #class GPUStatsCallback(Callback):
-    #    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx, dataloader_idx=0):
-    #        gpu_mem = torch.cuda.memory_allocated() / (1024 ** 3)  # GB
+    class GPUStatsCallback(Callback):
+        def on_train_batch_start(self, trainer, pl_module, batch, batch_idx, dataloader_idx=0):
+             gpu_mem = torch.cuda.memory_allocated() / (1024 ** 3)  # GB
     #        print(f"GPU Memory Allocated: {gpu_mem:.2f} GB")
 
     # Initialize the Trainer with the custom callbacks
@@ -119,7 +119,7 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
         precision='16-mixed',
         strategy="deepspeed_stage_2",
-        callbacks=[checkpoint_callback, tb_logger_callback],
+        callbacks=[checkpoint_callback, tb_logger_callback, GPUStatsCallback()],
         log_every_n_steps=50,          # Log every 50 steps
         enable_progress_bar=True
     )
