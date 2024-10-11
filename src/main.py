@@ -119,7 +119,7 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
         accelerator="gpu" if torch.cuda.is_available() else 'auto',
         precision='16-mixed',
         strategy="deepspeed_stage_2",
-        callbacks=[checkpoint_callback, tb_logger_callback, GPUStatsCallback()],
+        callbacks=[checkpoint_callback, tb_logger_callback,()],
         log_every_n_steps=50,          # Log every 50 steps
         enable_progress_bar=True
     )
