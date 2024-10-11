@@ -53,8 +53,8 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
         forward_expansion=4,      # Reduced from 4
         dropout_rate=0.1,
         vocab_size=50233,         # Optional: Reduced from 50233
-        batch_size=32,             # Reduced from 32
-        sequence_length=512,      # Reduced from 1024
+        batch_size=64,             # Reduced from 32
+        sequence_length=1024,      # Reduced from 1024
         max_epochs=10,             # Reduced from 10
         dataset_length=dataset_length
 )
