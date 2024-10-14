@@ -47,13 +47,13 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
 
     # Initialize model with hpparams such as dataset_length
     model = GPTModel(
-        embed_size=768,           # Reduced from 768
-        num_layers=12,             # Reduced from 12
-        heads=12,                  # Reduced from 12
-        forward_expansion=4,      # Reduced from 4
+        embed_size=2048,           # Reduced from 4096
+        num_layers=24,             # Reduced from 36
+        heads=16,                  # Reduced from 32
+        forward_expansion=4,      # Reduced from 8
         dropout_rate=0.1,
         vocab_size=50233,         # Optional: Reduced from 50233
-        batch_size=64,             # Reduced from 32
+        batch_size=32,             # Reduced from 32
         sequence_length=1024,      # Reduced from 1024
         max_epochs=10,             # Reduced from 10
         dataset_length=dataset_length
