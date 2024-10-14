@@ -109,7 +109,7 @@ def train_model(bucket_name, train_blob_name, val_blob_name):
     class GPUStatsCallback(Callback):
         def on_train_batch_start(self, trainer, pl_module, batch, batch_idx, dataloader_idx=0):
              gpu_mem = torch.cuda.memory_allocated() / (1024 ** 3)  # GB
-    #        print(f"GPU Memory Allocated: {gpu_mem:.2f} GB")
+             print(f"GPU Memory Allocated: {gpu_mem:.2f} GB")
 
     # Initialize the Trainer with the custom callbacks
     trainer = Trainer(
