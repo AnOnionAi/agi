@@ -30,12 +30,13 @@ def get_latest_checkpoint(bucket_name, experiments_folder):
 def read_hparams(bucket_name, experiments_folder, model_version=None):
     try: 
         if model_version:
-            hparams_blob = f"{experiments_folder}/version_{model_version}/hparams.yaml"
+            hparams_blob = f"{experiments_folder}/{model_version}/checkpoints/hparams.yaml"
         else:
-            # Fetch the latest version
-            versions = [d.name for d in list_blobs(bucket_name, prefix=f"{experiments_folder}/version_") if d.name.endswith('hparams.yaml')]
+            # Fetch all hparams.yaml files under experiments_folder
+            versions = [d.name for d in list_blobs(bucket_name, prefix=f"{experiments_folder}") if 'hparams.yaml' in d.name]
             if not versions:
                 raise Exception("No hparams.yaml files found.")
+            # Sort the versions to find the latest one
             hparams_blob = sorted(versions, reverse=True)[0]
         
         local_hparams = "hparams.yaml"
